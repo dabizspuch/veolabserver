@@ -1,0 +1,12 @@
+[project]
+name = "veolabserver"
+version = "0.1.0"
+authors = [
+  { name="Dabiz Spuch Calvar", email="dabiz@spuch.com" },
+]
+description = "Servicio de comunicación y sincronización de datos de Veolab"
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
