@@ -1,12 +1,13 @@
 import pika
-import sys
-import os
 import json
 import time
 import signal
-from threading import Thread
+import os
+from threading import Thread, Event
 from .database.database_veolab import DatabaseVeolab
- 
+
+stop_event = Event()
+
 def process_received(body, database):
     # Procesa mensajes recibidos en la cola de analíticasRecibidas
     try:
@@ -81,7 +82,11 @@ def listener_receive(channel, database):
 
     channel.basic_consume(queue='analiticasRecibidas', on_message_callback=callback, auto_ack=True)
     print("Esperando muestras ...")
-    channel.start_consuming()
+    while not stop_event.is_set():
+        try:
+            channel.connection.process_data_events(time_limit=1)  # Reemplaza start_consuming
+        except Exception:
+            break
 
 
 def listener_perform(channel, database):
@@ -91,14 +96,22 @@ def listener_perform(channel, database):
 
     channel.basic_consume(queue='resultadoAnaliticasRealizadas', on_message_callback=callback, auto_ack=True)
     print("Esperando resultados ...")
-    channel.start_consuming()
+    while not stop_event.is_set():
+        try:
+            channel.connection.process_data_events(time_limit=1)
+        except Exception:
+            break
 
+def process_reports_loop(channel, seconds):
+    while not stop_event.is_set():
+        process_reports(channel)
+        stop_event.wait(seconds)
 
 def run():
     database = None
     database_receive = None
     database_perform = None
-    database_reports = None
+    connection_reports = None
     connection_receive = None
     connection_perform = None
     try:
@@ -109,15 +122,13 @@ def run():
             rb_config = database.get_rabbit_config()
 
         if rb_config is not None:
-
             credentials = pika.PlainCredentials(rb_config['PARCIGU'], rb_config['PARCIGC'])
 
             # Inicia el escuchador para la cola analiticasRecibidas 
             database_receive = DatabaseVeolab()
             database_receive.open()
             if database_receive.connection is not None:
-                connection_receive = pika.BlockingConnection(
-                    pika.ConnectionParameters(
+                connection_receive = pika.BlockingConnection(pika.ConnectionParameters(
                         rb_config['PARCIGI'],  # Ip
                         rb_config['PARCIGP'],  # Puerto
                         rb_config['PARCIGV'],  # Vhost
@@ -130,8 +141,7 @@ def run():
             database_perform = DatabaseVeolab()
             database_perform.open()
             if database_perform.connection is not None:
-                connection_perform = pika.BlockingConnection(
-                    pika.ConnectionParameters(
+                connection_perform = pika.BlockingConnection(pika.ConnectionParameters(
                         rb_config['PARCIGI'],  # Ip
                         rb_config['PARCIGP'],  # Puerto
                         rb_config['PARCIGV'],  # Vhost
@@ -141,38 +151,50 @@ def run():
                 thread_perform.start()
 
             # Inicia una consulta periódica a la base de datos para procesar informes
-            connection_reports = pika.BlockingConnection(
-                pika.ConnectionParameters(
+            connection_reports = pika.BlockingConnection(pika.ConnectionParameters(
                     rb_config['PARCIGI'],  # Ip
                     rb_config['PARCIGP'],  # Puerto
                     rb_config['PARCIGV'],  # Vhost
                     credentials))
             channel_reports = connection_reports.channel()
-            seconds = int(0 if rb_config['PARNSEC'] is None else rb_config['PARNSEC']) 
+            seconds = int(rb_config['PARNSEC'] or 60) 
             if seconds <= 0:
                 seconds = 60
-            def timer():
-                while True:
-                    process_reports(channel_reports)
-                    time.sleep(seconds)  
+            thread_report = Thread(target=process_reports_loop, args=(channel_reports, seconds))
+            thread_report.start()                
 
-            thread_report = Thread(target=timer)
-            thread_report.start() 
+            while not stop_event.is_set():
+                time.sleep(1) 
 
-            while thread_receive.is_alive() or thread_perform.is_alive() or thread_report.is_alive():
-                time.sleep(1)
+            if channel_receive.is_open:
+                channel_receive.stop_consuming()
+            if channel_perform.is_open:
+                channel_perform.stop_consuming()
+
+            thread_receive.join()
+            thread_perform.join()
+            thread_report.join()
 
     except pika.exceptions.AMQPError as e:
         print("Error de conexión RabbitMQ:", e)
     except Exception as e:
         print("Error inesperado:", e)
+
     finally:
-        if connection_receive is not None:
+        if thread_receive is not None:
+            thread_receive.join()
+        if thread_perform is not None:
+            thread_perform.join()
+        if thread_report is not None:
+            thread_report.join()
+
+        if connection_receive is not None and not connection_receive.is_closed:
             connection_receive.close()
-        if connection_perform is not None:
+        if connection_perform is not None and not connection_perform.is_closed:
             connection_perform.close()
-        if connection_reports is not None:
+        if connection_reports is not None and not connection_reports.is_closed:
             connection_reports.close()
+
         if database is not None:
             database.close()
         if database_receive is not None:
@@ -180,14 +202,12 @@ def run():
         if database_perform is not None:
             database_perform.close()
 
+
 if __name__ == '__main__':
-    def handle_interrupt(signal, frame):
+    def handle_interrupt(signal_received, frame):
         print ("Interrumpido")        
-        try:
-            sys.exit(0)
-        except SystemExit:
-            os._exit(0)
+        stop_event.set()
+        os._exit(0)
 
     signal.signal(signal.SIGINT, handle_interrupt)
-
     run()
