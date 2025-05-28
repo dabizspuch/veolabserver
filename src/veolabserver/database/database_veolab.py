@@ -168,9 +168,9 @@ class DatabaseVeolab (object):
     def get_parameters_op(self, division, serial, code_op):
         # Obtiene la lista de técnicas de la operación de entrada
         query = """
-            SELECT RESCNOM, TECCIGC, RESCMET, RESCMIN, CORCVAL, RESCUNI 
+            SELECT RESCNOM, TYCCREF, RESCMET, RESCMIN, CORCVAL, RESCUNI 
             FROM LABRES 
-            LEFT JOIN LABTEC ON (LABRES.TEC3DEL = LABTEC.DEL3COD AND LABRES.TEC3COD = LABTEC.TEC1COD) 
+            LEFT JOIN LABTYC ON (LABRES.TEC3DEL = LABTYC.TEC3DEL AND LABRES.TEC3COD = LABTYC.TEC3COD) 
             LEFT JOIN LABCOR ON (LABRES.OPE3DEL = LABCOR.OPE3DEL AND LABRES.OPE3SER = LABCOR.OPE3SER 
                 AND LABRES.OPE3COD = LABCOR.OPE3COD AND LABRES.TEC3DEL = LABCOR.TEC3DEL 
                 AND LABRES.TEC3COD = LABCOR.TEC3COD)
@@ -300,7 +300,7 @@ class DatabaseVeolab (object):
             for tec_row in tec_rows:
                 objeto_analisis = {
                     'objetoAnalisis': tec_row['RESCNOM'],
-                    'codigoObjetoAnalisis': tec_row['TECCIGC'],
+                    'codigoObjetoAnalisis': tec_row['TYCCREF'],
                     'metodo': tec_row['RESCMET'],
                     'minimo': tec_row['RESCMIN'],
                     'resultado': tec_row['CORCVAL'],
