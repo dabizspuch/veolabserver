@@ -3,8 +3,24 @@ import json
 import time
 import signal
 import os
+import logging
 from threading import Thread, Event
 from .database.database_veolab import DatabaseVeolab
+
+log_dir = "/var/log/veolabserver"
+if os.name == 'nt':  # Windows
+    log_dir = "C:\\veolabserver\\logs"
+
+os.makedirs(log_dir, exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.FileHandler(os.path.join(log_dir, "veolabserver.log")),
+        logging.StreamHandler()
+    ]
+)
 
 stop_event = Event()
 
@@ -72,10 +88,10 @@ def process_reports(channel):
                     except Exception as e:
                         database.logdb("EXCEPTION", f"Excepción al enviar informe {report['codigoEntidadIgeo']}: {str(e)}", report['codigoEntidadIgeo'], True)
 
-        print("Procesando informes ...")
+        logging.info("Procesando informes ...")
 
     except Exception as e:
-        print("Error inesperado:", e)
+        logging.error("Error inesperado:", e)
     finally:
         if database is not None:
             database.close()
@@ -87,7 +103,7 @@ def listener_receive(channel, database):
         process_received(body, database)
 
     channel.basic_consume(queue='analiticasRecibidas', on_message_callback=callback, auto_ack=True)
-    print("Esperando muestras ...")
+    logging.info("Esperando muestras ...")
     while not stop_event.is_set():
         try:
             channel.connection.process_data_events(time_limit=1)  # Reemplaza start_consuming
@@ -101,7 +117,7 @@ def listener_perform(channel, database):
         process_performed(body, database)
 
     channel.basic_consume(queue='resultadoAnaliticasRealizadas', on_message_callback=callback, auto_ack=True)
-    print("Esperando resultados ...")
+    logging.info("Esperando resultados ...")
     while not stop_event.is_set():
         try:
             channel.connection.process_data_events(time_limit=1)
@@ -114,6 +130,9 @@ def process_reports_loop(channel, seconds):
         stop_event.wait(seconds)
 
 def run():
+    thread_receive = None
+    thread_perform = None
+    thread_report = None    
     database = None
     database_receive = None
     database_perform = None
@@ -182,18 +201,11 @@ def run():
             thread_report.join()
 
     except pika.exceptions.AMQPError as e:
-        print("Error de conexión RabbitMQ:", e)
+        logging.error("Error de conexión RabbitMQ:", e)
     except Exception as e:
-        print("Error inesperado:", e)
+        logging.error("Error inesperado:", e)
 
     finally:
-        if thread_receive is not None:
-            thread_receive.join()
-        if thread_perform is not None:
-            thread_perform.join()
-        if thread_report is not None:
-            thread_report.join()
-
         if connection_receive is not None and not connection_receive.is_closed:
             connection_receive.close()
         if connection_perform is not None and not connection_perform.is_closed:
@@ -211,7 +223,7 @@ def run():
 
 if __name__ == '__main__':
     def handle_interrupt(signal_received, frame):
-        print ("Interrumpido")        
+        logging.info("Interrumpido")        
         stop_event.set()
         os._exit(0)
 
