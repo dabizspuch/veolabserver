@@ -48,24 +48,30 @@ def process_performed(body, database):
 
 def process_reports(channel):    
     # Envía informes finalizados a la cola de analiticasRealizadas
+    database = None
     try:
         database = DatabaseVeolab()
         database.open()
         if database.connection is not None:
+            channel.confirm_delivery()
             reports = database.get_reports()
-            if reports is not None:
+            if reports is not None:                
                 for report in reports:
-                    queue = report.get('cola') or 'analiticasRealizadas'
+                    queue = report.get('cola') # or 'analiticasRealizadas'
+
                     report_copy = {k: v for k, v in report.items() if k != 'cola'}
                     report_json = json.dumps(report_copy, ensure_ascii=False).encode('utf8')
-                    channel.basic_publish(
-                        exchange='analiticasRealizadas_exchange', 
-                        routing_key=queue, 
-                        body=report_json
-                    )
-                    database.mark_sample_sent(report['codigoEntidadIgeo'])
-                    database.logdb("OK", "Informe enviado", report['codigoEntidadIgeo'], True)
-        
+                    try:                                              
+                        channel.basic_publish(
+                            exchange='analiticasRealizadas_exchange', 
+                            routing_key=queue, 
+                            body=report_json,
+                        )
+                        database.mark_sample_sent(report['codigoEntidadIgeo'])
+                        database.logdb("OK", "Informe enviado", report['codigoEntidadIgeo'], True)
+                    except Exception as e:
+                        database.logdb("EXCEPTION", f"Excepción al enviar informe {report['codigoEntidadIgeo']}: {str(e)}", report['codigoEntidadIgeo'], True)
+
         print("Procesando informes ...")
 
     except Exception as e:

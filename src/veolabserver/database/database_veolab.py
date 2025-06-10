@@ -174,7 +174,7 @@ class DatabaseVeolab (object):
             LEFT JOIN LABCOR ON (LABRES.OPE3DEL = LABCOR.OPE3DEL AND LABRES.OPE3SER = LABCOR.OPE3SER 
                 AND LABRES.OPE3COD = LABCOR.OPE3COD AND LABRES.TEC3DEL = LABCOR.TEC3DEL 
                 AND LABRES.TEC3COD = LABCOR.TEC3COD)
-            WHERE LABRES.OPE3DEL = %s AND LABRES.OPE3SER = %s AND LABRES.OPE3COD = %s AND COR1COD = 1
+            WHERE LABRES.OPE3DEL = %s AND LABRES.OPE3SER = %s AND LABRES.OPE3COD = %s AND COR1COD = 1 AND (TYCCREF IS NOT NULL AND TYCCREF <> '')
         """
         self.cursor.execute(query, (division, serial, code_op))
         rows = self.cursor.fetchall()
@@ -273,7 +273,7 @@ class DatabaseVeolab (object):
         reports = []
         for row in rows:
             report = {}
-            report['claseEntidadIgeo'] = "ANALITICA"
+            report['tipoEntidadIgeo'] = "ANALITICA"
             report['idEntidadIgeo'] = row['OPECIDG']
             report['codigoEntidadIgeo'] = row['OPECREF']
             report['comando'] = "UPDATE"
@@ -308,9 +308,9 @@ class DatabaseVeolab (object):
                 }
                 report['datos']['objetosAnalisis'].append(objeto_analisis)
 
-            report['nombreDocumento'] = self.get_document_name(row['INF1DEL'], row['INF1SER'], row['INF1COD'])
-            report['pdfAnalitica'] = self.get_document_pdf(row['INF1DEL'], row['INF1SER'], row['INF1COD'])    
-            report['empresaId'] = row['CLICIGC']
+            report['datos']['nombreDocumento'] = self.get_document_name(row['INF1DEL'], row['INF1SER'], row['INF1COD'])
+            report['datos']['pdfAnalitica'] = self.get_document_pdf(row['INF1DEL'], row['INF1SER'], row['INF1COD'])    
+            report['datos']['empresaId'] = row['CLICIGC']
             
             report['cola'] = row['CLICCIG']
 
