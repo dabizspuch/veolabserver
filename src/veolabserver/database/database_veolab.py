@@ -1,5 +1,4 @@
 import pymysql
-import json
 import base64
 from .database_config import DatabaseConfig
 from datetime import datetime

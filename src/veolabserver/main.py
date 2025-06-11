@@ -69,7 +69,8 @@ def process_reports(channel):
         database = DatabaseVeolab()
         database.open()
         if database.connection is not None:
-            channel.confirm_delivery()
+            if not channel._delivery_confirmation:
+                channel.confirm_delivery()
             reports = database.get_reports()
             if reports is not None:                
                 for report in reports:
@@ -77,6 +78,7 @@ def process_reports(channel):
 
                     report_copy = {k: v for k, v in report.items() if k != 'cola'}
                     report_json = json.dumps(report_copy, ensure_ascii=False).encode('utf8')
+                    print (report_json);
                     try:                                              
                         channel.basic_publish(
                             exchange='analiticasRealizadas_exchange', 
