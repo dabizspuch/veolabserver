@@ -233,9 +233,10 @@ class DatabaseVeolab (object):
         rows = self.cursor.fetchall()
         blob = b""
         for row in rows:
-            blob += row['BLOLCON']
-
-        blob = blob[:row['BLONTAM']]
+            chunk = row['BLOLCON']
+            size = row['BLONTAM']
+            blob += chunk[:size]  
+        
         return base64.b64encode(blob).decode('utf8')
 
     def get_reports(self):

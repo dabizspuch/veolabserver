@@ -77,13 +77,13 @@ def process_reports(channel):
                     queue = report.get('cola') # or 'analiticasRealizadas'
 
                     report_copy = {k: v for k, v in report.items() if k != 'cola'}
-                    report_json = json.dumps(report_copy, ensure_ascii=False).encode('utf8')
-                    print (report_json);
-                    try:                                              
+                    report_json = json.dumps(report_copy, ensure_ascii=False)
+
+                    try:  
                         channel.basic_publish(
                             exchange='analiticasRealizadas_exchange', 
                             routing_key=queue, 
-                            body=report_json,
+                            body=report_json.encode('utf8'),
                         )
                         database.mark_sample_sent(report['codigoEntidadIgeo'])
                         database.logdb("OK", "Informe enviado", report['codigoEntidadIgeo'], True)
@@ -222,6 +222,16 @@ def run():
         if database_perform is not None:
             database_perform.close()
 
+def run_with_reconnect():
+    while not stop_event.is_set():
+        try:
+            run()
+        except pika.exceptions.AMQPError as e:
+            logging.error(f"RabbitMQ error, reconectando en 5 segundos: {e}")
+            time.sleep(5)
+        except Exception as e:
+            logging.error(f"Error inesperado, reconectando en 5 segundos: {e}")
+            time.sleep(5)
 
 if __name__ == '__main__':
     def handle_interrupt(signal_received, frame):
@@ -230,4 +240,4 @@ if __name__ == '__main__':
         os._exit(0)
 
     signal.signal(signal.SIGINT, handle_interrupt)
-    run()
+    run_with_reconnect()
