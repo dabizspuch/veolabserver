@@ -1,6 +1,6 @@
 [project]
 name = "veolabserver"
-version = "0.1.0"
+version = "1.0.0"
 authors = [
   { name="Dabiz Spuch Calvar", email="dabiz@spuch.com" },
 ]
