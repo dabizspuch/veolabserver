@@ -32,20 +32,28 @@ This Python service synchronizes data between the **Veolab** database and **IGEO
 
 ## Usage
 
-Run the application from the root directory:
+Navigate to the `src/` directory and run the module:
 ```bash
-python src/veolabserver.py
+cd src
+python -m veolabserver
 ```
 
 ## Project Structure
 
 ```
-src/
-├── database/
-│   ├── database_config.py
-│   ├── database_veolab.py
-│   └── config.ini      # (Git ignored)
-├── veolabserver.py
+veolabserver/
+├── icons/
+│   ├── veolab.ico
+├── src/
+│   ├── veolabserver/
+│   │   ├── database/
+│   │   │   ├── config.ini  # (Git ignored)
+│   │   │   ├── database_config.py
+│   │   │   ├── database_veolab.py
+│   │   ├── veolabserver.py
+├── README.md
+├── pyproject.toml
+├── requirements.txt
 ```
 
 ## Notes
