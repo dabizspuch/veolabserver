@@ -4,6 +4,7 @@ import time
 import signal
 import os
 import logging
+import hashlib
 from threading import Thread, Event
 from .database.database_veolab import DatabaseVeolab
 
@@ -131,6 +132,27 @@ def process_reports_loop(channel, seconds):
         process_reports(channel)
         stop_event.wait(seconds)
 
+def hash_config(config):
+    config_string = ''.join([config.get(k, '') for k in ['PARCIGU', 'PARCIGC', 'PARCIGI', 'PACCIGP', 'PARCIGV']])
+    return hashlib.sha256(config_string.encode()).hexdigest()
+
+def monitor_config_changes(initial_hash):
+    while not stop_event.is_set():
+        try:
+            db = DatabaseVeolab()
+            db.open()
+            if db.connection is not None:
+                new_config = db.get_rabbit_config()
+                new_hash = hash_config(new_config)
+                if new_hash != initial_hash:
+                    logging.info("Cambio detectado en configuración Rabbit. Reiniciando servicio...")
+                    os._exit(1)
+        except Exception as e:
+            logging.error(f"Error al comprobar cambios en configuración: {e}")
+        finally:
+            db.close()
+        time.sleep(60)
+
 def run():
     thread_receive = None
     thread_perform = None
@@ -141,6 +163,7 @@ def run():
     connection_reports = None
     connection_receive = None
     connection_perform = None
+
     try:
         database = DatabaseVeolab()
         database.open()
@@ -151,6 +174,10 @@ def run():
         if rb_config is not None:
             credentials = pika.PlainCredentials(rb_config['PARCIGU'], rb_config['PARCIGC'])
 
+            # Iniciar monitor de cambios de configuración
+            initial_hash = hash_config(rb_config)
+            Thread(target=monitor_config_changes, args=(initial_hash,), daemon=True).start()
+            
             # Inicia el escuchador para la cola analiticasRecibidas 
             database_receive = DatabaseVeolab()
             database_receive.open()
