@@ -153,6 +153,10 @@ def monitor_config_changes(initial_hash):
             db.close()
         time.sleep(60)
 
+def is_valid_rabbit_config(config):
+    required_keys = ['PARCIGU', 'PARCIGC', 'PARCIGI', 'PARCIGP', 'PARCIGV']
+    return all(config.get(k) for k in required_keys)
+
 def run():
     thread_receive = None
     thread_perform = None
@@ -171,7 +175,7 @@ def run():
         if database.connection is not None:
             rb_config = database.get_rabbit_config()
 
-        if rb_config is not None:
+        if rb_config and is_valid_rabbit_config(rb_config):
             credentials = pika.PlainCredentials(rb_config['PARCIGU'], rb_config['PARCIGC'])
 
             # Iniciar monitor de cambios de configuración
@@ -228,6 +232,10 @@ def run():
             thread_receive.join()
             thread_perform.join()
             thread_report.join()
+        else:
+            logging.error("Configuración RabbitMQ incompleta o inválida. Reiniciando servicio...")
+            time.sleep(3)
+            os._exit(1)            
 
     except pika.exceptions.AMQPError as e:
         logging.error("Error de conexión RabbitMQ:", e)
