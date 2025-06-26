@@ -7,6 +7,7 @@ import logging
 import hashlib
 from threading import Thread, Event
 from .database.database_veolab import DatabaseVeolab
+from pika.exceptions import AMQPConnectionError, IncompatibleProtocolError
 
 log_dir = "/var/log/veolabserver"
 if os.name == 'nt':  # Windows
@@ -186,11 +187,16 @@ def run():
             database_receive = DatabaseVeolab()
             database_receive.open()
             if database_receive.connection is not None:
-                connection_receive = pika.BlockingConnection(pika.ConnectionParameters(
-                        rb_config['PARCIGI'],  # Ip
-                        rb_config['PARCIGP'],  # Puerto
-                        rb_config['PARCIGV'],  # Vhost
-                        credentials))
+                try:
+                    connection_receive = pika.BlockingConnection(pika.ConnectionParameters(
+                            rb_config['PARCIGI'],  # Ip
+                            rb_config['PARCIGP'],  # Puerto
+                            rb_config['PARCIGV'],  # Vhost
+                            credentials))
+                except (AMQPConnectionError, IncompatibleProtocolError) as e:
+                    logging.error(f"Error de conexión con RabbitMQ (receive): {e}")
+                    time.sleep(3)
+                    os._exit(1)                    
                 channel_receive = connection_receive.channel()
                 thread_receive = Thread(target=listener_receive, args=(channel_receive, database_receive))
                 thread_receive.start()
@@ -199,21 +205,31 @@ def run():
             database_perform = DatabaseVeolab()
             database_perform.open()
             if database_perform.connection is not None:
-                connection_perform = pika.BlockingConnection(pika.ConnectionParameters(
-                        rb_config['PARCIGI'],  # Ip
-                        rb_config['PARCIGP'],  # Puerto
-                        rb_config['PARCIGV'],  # Vhost
-                        credentials))
+                try:
+                    connection_perform = pika.BlockingConnection(pika.ConnectionParameters(
+                            rb_config['PARCIGI'],  # Ip
+                            rb_config['PARCIGP'],  # Puerto
+                            rb_config['PARCIGV'],  # Vhost
+                            credentials))
+                except (AMQPConnectionError, IncompatibleProtocolError) as e:
+                    logging.error(f"Error de conexión con RabbitMQ (receive): {e}")
+                    time.sleep(3)
+                    os._exit(1)  
                 channel_perform = connection_perform.channel()            
                 thread_perform = Thread(target=listener_perform, args=(channel_perform, database_perform))
                 thread_perform.start()
 
             # Inicia una consulta periódica a la base de datos para procesar informes
-            connection_reports = pika.BlockingConnection(pika.ConnectionParameters(
-                    rb_config['PARCIGI'],  # Ip
-                    rb_config['PARCIGP'],  # Puerto
-                    rb_config['PARCIGV'],  # Vhost
-                    credentials))
+            try:
+                connection_reports = pika.BlockingConnection(pika.ConnectionParameters(
+                        rb_config['PARCIGI'],  # Ip
+                        rb_config['PARCIGP'],  # Puerto
+                        rb_config['PARCIGV'],  # Vhost
+                        credentials))
+            except (AMQPConnectionError, IncompatibleProtocolError) as e:
+                logging.error(f"Error de conexión con RabbitMQ (receive): {e}")
+                time.sleep(3)
+                os._exit(1)  
             channel_reports = connection_reports.channel()
             seconds = int(rb_config['PARNSEC'] or 60) 
             if seconds <= 0:
