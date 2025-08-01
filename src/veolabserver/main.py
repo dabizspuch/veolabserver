@@ -104,9 +104,13 @@ def process_reports(channel):
 def listener_receive(channel, database):
     # Escucha la cola analiticasRecibidas
     def callback(ch, method, properties, body):
-        process_received(body, database)
+        try:
+            process_received(body, database)
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+        except Exception as e:
+            logging.error(f"Error al procesar mensaje en analiticasRecibidas: {e}")            
 
-    channel.basic_consume(queue='analiticasRecibidas', on_message_callback=callback, auto_ack=True)
+    channel.basic_consume(queue='analiticasRecibidas', on_message_callback=callback, auto_ack=False)
     logging.info("Esperando muestras ...")
     while not stop_event.is_set():
         try:
@@ -118,9 +122,13 @@ def listener_receive(channel, database):
 def listener_perform(channel, database):
     # Escucha la cola resultadoAnaliticasRealizadas
     def callback(ch, method, properties, body):
-        process_performed(body, database)
+        try:
+            process_performed(body, database)
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+        except Exception as e:
+            logging.error(f"Error al procesar mensaje en resultadoAnaliticasRealizadas: {e}")   
 
-    channel.basic_consume(queue='resultadoAnaliticasRealizadas', on_message_callback=callback, auto_ack=True)
+    channel.basic_consume(queue='resultadoAnaliticasRealizadas', on_message_callback=callback, auto_ack=False)
     logging.info("Esperando resultados ...")
     while not stop_event.is_set():
         try:
