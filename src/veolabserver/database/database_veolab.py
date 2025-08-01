@@ -449,10 +449,10 @@ class DatabaseVeolab (object):
         # Tabla LABOYS (servicios)
         if cod_service is not None:
             query = """
-                INSERT INTO LABOYS (OPE3DEL, OPE3SER, OPE3COD, SER3DEL, SER3COD, OYSNPOS, OYSBPRE) 
-                VALUES (%s, %s, %s, %s, %s, %s, 'T')
+                INSERT INTO LABOYS (OPE3DEL, OPE3SER, OPE3COD, SER3DEL, SER3COD, OYSNPRE, OYSCDTO, OYSNPOS, OYSBPRE) 
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'T')
             """
-            val = (self.division, self.serial, id_op, div_service, cod_service, 1)
+            val = (self.division, self.serial, id_op, div_service, cod_service, prize, discount, 1)
             self.cursor.execute(query, val)
         
         # Tabla LABOYE (empleados)
