@@ -86,6 +86,7 @@ def process_reports(channel):
                             exchange='analiticasRealizadas_exchange', 
                             routing_key=queue, 
                             body=report_json.encode('utf8'),
+                            properties=pika.BasicProperties(delivery_mode=2)
                         )
                         database.mark_sample_sent(report['codigoEntidadIgeo'])
                         database.logdb("OK", "Informe enviado", report['codigoEntidadIgeo'], True)
@@ -110,12 +111,18 @@ def listener_receive(channel, database):
         except Exception as e:
             logging.error(f"Error al procesar mensaje en analiticasRecibidas: {e}")            
 
+    def on_cancel_callback(method_frame):
+        logging.warning(f"Consumidor cancelado en analiticasRecibidas: {method_frame}")
+
     channel.basic_consume(queue='analiticasRecibidas', on_message_callback=callback, auto_ack=False)
+    channel.add_on_cancel_callback(on_cancel_callback)
+
     logging.info("Esperando muestras ...")
     while not stop_event.is_set():
         try:
             channel.connection.process_data_events(time_limit=1)  # Reemplaza start_consuming
-        except Exception:
+        except Exception as e:
+            logging.error(f"Error en process_data_events: {e}")
             break
 
 
@@ -128,7 +135,12 @@ def listener_perform(channel, database):
         except Exception as e:
             logging.error(f"Error al procesar mensaje en resultadoAnaliticasRealizadas: {e}")   
 
+    def on_cancel_callback(method_frame):
+        logging.warning(f"Consumidor cancelado en resultadoAnaliticasRealizadas: {method_frame}")
+
     channel.basic_consume(queue='resultadoAnaliticasRealizadas', on_message_callback=callback, auto_ack=False)
+    channel.add_on_cancel_callback(on_cancel_callback)
+    
     logging.info("Esperando resultados ...")
     while not stop_event.is_set():
         try:
