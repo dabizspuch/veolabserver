@@ -114,7 +114,7 @@ def process_reports(channel):
         logging.info("Procesando informes ...")
 
     except Exception as e:
-        logging.error("Error inesperado:", e)
+        logging.error(f"Error inesperado: {e}")
 
     finally:
         if database is not None:
@@ -241,7 +241,7 @@ def run():
                     time.sleep(3)
                     os._exit(1)                    
                 channel_receive = connection_receive.channel()
-                channel_receive.add_on_close_callback(lambda ch, reason: logging.warning(f"Canal analiticasRecibidas cerrado: {reason}"))
+                channel_receive.add_on_cancel_callback(lambda method_frame: logging.warning(f"Canal analiticasRecibidas cancelado: {method_frame}"))
                 thread_receive = Thread(target=listener_receive, args=(channel_receive, database_receive))
                 thread_receive.start()
 
@@ -262,7 +262,7 @@ def run():
                     time.sleep(3)
                     os._exit(1)  
                 channel_perform = connection_perform.channel()
-                channel_perform.add_on_close_callback(lambda ch, reason: logging.warning(f"Canal resultadoAnaliticasRealizadas cerrado: {reason}"))
+                channel_receive.add_on_cancel_callback(lambda method_frame: logging.warning(f"Canal resultadoAnaliticasRealizadas cancelado: {method_frame}"))
                 thread_perform = Thread(target=listener_perform, args=(channel_perform, database_perform))
                 thread_perform.start()
 
@@ -303,9 +303,9 @@ def run():
             os._exit(1)            
 
     except pika.exceptions.AMQPError as e:
-        logging.error("Error de conexión RabbitMQ:", e)
+        logging.error(f"EError de conexión RabbitMQ: {e}")
     except Exception as e:
-        logging.error("Error inesperado:", e)
+        logging.error(f"Error inesperado: {e}")
 
     finally:
         if connection_receive is not None and not connection_receive.is_closed:
