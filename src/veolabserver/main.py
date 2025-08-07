@@ -29,7 +29,9 @@ stop_event = Event()
 def process_received(body, database):
     # Procesa mensajes recibidos en la cola de analíticasRecibidas
     try:
+        logging.info(f"Mensaje recibido: {body}")
         json_body = json.loads(body)
+                
         payload = json_body['datos']
         client_id = json_body['empresaId']
         igeo_id = json_body['idEntidadIgeo']
