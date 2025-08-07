@@ -74,8 +74,6 @@ def process_reports(channel):
         database.open()
 
         if database.connection is not None:
-            channel.confirm_delivery()
-
             reports = database.get_reports()
             if reports is not None:                
                 for report in reports:
@@ -278,6 +276,7 @@ def run():
                 time.sleep(3)
                 os._exit(1)  
             channel_reports = connection_reports.channel()
+            channel_reports.confirm_delivery()
             seconds = int(rb_config['PARNSEC'] or 60) 
             if seconds <= 0:
                 seconds = 60
