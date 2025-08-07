@@ -29,7 +29,7 @@ stop_event = Event()
 def process_received(body, database):
     # Procesa mensajes recibidos en la cola de analíticasRecibidas
     try:
-        logging.info(f"Mensaje recibido: {body}")
+        logging.info(f"Mensaje recibido: {body.decode('utf-8')}")
         json_body = json.loads(body)
                 
         payload = json_body['datos']
@@ -72,33 +72,50 @@ def process_reports(channel):
     try:
         database = DatabaseVeolab()
         database.open()
+
         if database.connection is not None:
             if not channel._delivery_confirmation:
                 channel.confirm_delivery()
+
             reports = database.get_reports()
             if reports is not None:                
                 for report in reports:
                     queue = report.get('cola') # or 'analiticasRealizadas'
-
                     report_copy = {k: v for k, v in report.items() if k != 'cola'}
                     report_json = json.dumps(report_copy, ensure_ascii=False)
 
-                    try:  
-                        channel.basic_publish(
-                            exchange='analiticasRealizadas_exchange', 
-                            routing_key=queue, 
-                            body=report_json.encode('utf8'),
-                            properties=pika.BasicProperties(delivery_mode=2)
-                        )
-                        database.mark_sample_sent(report['codigoEntidadIgeo'])
-                        database.logdb("OK", "Informe enviado", report['codigoEntidadIgeo'], True)
-                    except Exception as e:
+                    if not channel.is_open:
+                        logging.warning(f"Canal cerrado, no se puede enviar informe {report['codigoEntidadIgeo']}")
+                        database.logdb("EXCEPTION", "Canal cerrado, no se pudo enviar informe", report['codigoEntidadIgeo'], True)
+                        continue
+
+                    for attempt in range(3):  # Hasta 3 intentos
+                        try:
+                            if not channel.is_open:
+                                raise Exception("Canal cerrado")
+
+                            channel.basic_publish(
+                                exchange='analiticasRealizadas_exchange', 
+                                routing_key=queue, 
+                                body=report_json.encode('utf8'),
+                                properties=pika.BasicProperties(delivery_mode=2)
+                            )
+                            database.mark_sample_sent(report['codigoEntidadIgeo'])
+                            database.logdb("OK", "Informe enviado", report['codigoEntidadIgeo'], True)
+                            break  # Éxito, salir del bucle de reintentos
+                        
+                        except Exception as e:
+                            logging.warning(f"Intento {attempt+1} fallido al enviar informe {report['codigoEntidadIgeo']}: {e}")
+                            time.sleep(2)
+                    else:  
+                        # Si se fallan los 3 intentos
                         database.logdb("EXCEPTION", f"Excepción al enviar informe {report['codigoEntidadIgeo']}: {str(e)}", report['codigoEntidadIgeo'], True)
 
         logging.info("Procesando informes ...")
 
     except Exception as e:
         logging.error("Error inesperado:", e)
+
     finally:
         if database is not None:
             database.close()
@@ -116,6 +133,7 @@ def listener_receive(channel, database):
     def on_cancel_callback(method_frame):
         logging.warning(f"Consumidor cancelado en analiticasRecibidas: {method_frame}")
 
+    channel.basic_qos(prefetch_count=50)
     channel.basic_consume(queue='analiticasRecibidas', on_message_callback=callback, auto_ack=False)
     channel.add_on_cancel_callback(on_cancel_callback)
 
@@ -140,6 +158,7 @@ def listener_perform(channel, database):
     def on_cancel_callback(method_frame):
         logging.warning(f"Consumidor cancelado en resultadoAnaliticasRealizadas: {method_frame}")
 
+    channel.basic_qos(prefetch_count=50)
     channel.basic_consume(queue='resultadoAnaliticasRealizadas', on_message_callback=callback, auto_ack=False)
     channel.add_on_cancel_callback(on_cancel_callback)
     
@@ -211,15 +230,18 @@ def run():
             if database_receive.connection is not None:
                 try:
                     connection_receive = pika.BlockingConnection(pika.ConnectionParameters(
-                            rb_config['PARCIGI'],  # Ip
-                            rb_config['PARCIGP'],  # Puerto
-                            rb_config['PARCIGV'],  # Vhost
-                            credentials))
+                            host=rb_config['PARCIGI'],  
+                            port=rb_config['PARCIGP'], 
+                            virtual_host=rb_config['PARCIGV'],  
+                            credentials=credentials,
+                            heartbeat=60,
+                            blocked_connection_timeout=300))
                 except (AMQPConnectionError, IncompatibleProtocolError) as e:
                     logging.error(f"Error de conexión con RabbitMQ (receive): {e}")
                     time.sleep(3)
                     os._exit(1)                    
                 channel_receive = connection_receive.channel()
+                channel_receive.add_on_close_callback(lambda ch, reason: logging.warning(f"Canal analiticasRecibidas cerrado: {reason}"))
                 thread_receive = Thread(target=listener_receive, args=(channel_receive, database_receive))
                 thread_receive.start()
 
@@ -229,25 +251,30 @@ def run():
             if database_perform.connection is not None:
                 try:
                     connection_perform = pika.BlockingConnection(pika.ConnectionParameters(
-                            rb_config['PARCIGI'],  # Ip
-                            rb_config['PARCIGP'],  # Puerto
-                            rb_config['PARCIGV'],  # Vhost
-                            credentials))
+                            host=rb_config['PARCIGI'],  
+                            port=rb_config['PARCIGP'],  
+                            virtual_host=rb_config['PARCIGV'],  
+                            credentials=credentials,
+                            heartbeat=60,
+                            blocked_connection_timeout=300))
                 except (AMQPConnectionError, IncompatibleProtocolError) as e:
                     logging.error(f"Error de conexión con RabbitMQ (receive): {e}")
                     time.sleep(3)
                     os._exit(1)  
-                channel_perform = connection_perform.channel()            
+                channel_perform = connection_perform.channel()
+                channel_perform.add_on_close_callback(lambda ch, reason: logging.warning(f"Canal resultadoAnaliticasRealizadas cerrado: {reason}"))
                 thread_perform = Thread(target=listener_perform, args=(channel_perform, database_perform))
                 thread_perform.start()
 
             # Inicia una consulta periódica a la base de datos para procesar informes
             try:
                 connection_reports = pika.BlockingConnection(pika.ConnectionParameters(
-                        rb_config['PARCIGI'],  # Ip
-                        rb_config['PARCIGP'],  # Puerto
-                        rb_config['PARCIGV'],  # Vhost
-                        credentials))
+                        host=rb_config['PARCIGI'],  
+                        port=rb_config['PARCIGP'],  
+                        virtual_host=rb_config['PARCIGV'], 
+                        credentials=credentials,
+                        heartbeat=60,
+                        blocked_connection_timeout=300))
             except (AMQPConnectionError, IncompatibleProtocolError) as e:
                 logging.error(f"Error de conexión con RabbitMQ (receive): {e}")
                 time.sleep(3)

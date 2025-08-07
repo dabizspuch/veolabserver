@@ -446,6 +446,14 @@ class DatabaseVeolab (object):
         )
         self.cursor.execute(query, val)
         
+        # Tabla LABOYA (valores de autodefinibles)
+        query = """
+            INSERT INTO LABOYA (OPE3DEL, OPE3SER, OPE3COD, AUT3DEL, AUT3COD) 
+            VALUES (%s, %s, %s, %s, %s)
+        """
+        val = (self.division, self.serial, id_op, '', 0) # El autodefinible cero es obligatorio
+        self.cursor.execute(query, val)
+
         # Tabla LABOYS (servicios)
         if cod_service is not None:
             query = """
