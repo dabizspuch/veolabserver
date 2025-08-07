@@ -74,8 +74,7 @@ def process_reports(channel):
         database.open()
 
         if database.connection is not None:
-            if not channel._delivery_confirmation:
-                channel.confirm_delivery()
+            channel.confirm_delivery()
 
             reports = database.get_reports()
             if reports is not None:                
@@ -107,9 +106,8 @@ def process_reports(channel):
                         except Exception as e:
                             logging.warning(f"Intento {attempt+1} fallido al enviar informe {report['codigoEntidadIgeo']}: {e}")
                             time.sleep(2)
-                    else:  
-                        # Si se fallan los 3 intentos
-                        database.logdb("EXCEPTION", f"Excepción al enviar informe {report['codigoEntidadIgeo']}: {str(e)}", report['codigoEntidadIgeo'], True)
+                            if attempt == 2:  # último intento
+                                database.logdb("EXCEPTION", f"Excepción al enviar informe {report['codigoEntidadIgeo']}: {str(e)}", report['codigoEntidadIgeo'], True)
 
         logging.info("Procesando informes ...")
 
