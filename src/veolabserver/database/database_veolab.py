@@ -2,6 +2,7 @@ import pymysql
 import base64
 from .database_config import DatabaseConfig
 from datetime import datetime
+from collections import namedtuple
 
 class DatabaseVeolab (object):
     """
@@ -328,6 +329,26 @@ class DatabaseVeolab (object):
         query = "UPDATE LABOPE SET OPECIGE = 'I' WHERE OPECIGE = 'E' AND OPECREF = %s"
         self.cursor.execute(query, (reference_op, ))    
 
+    def get_selfdefining(self, field):
+        # Obtiene el autodefinible de Veolab para el campo de entrada que corresponda con la nomenclatura
+        import re
+        humanName = re.sub(r'([A-Z])', r' \1', field).capitalize()
+        query = "SELECT DEL3COD, AUT1COD FROM LABAUT WHERE AUTCNOM = %s"        
+        self.cursor.execute(query, (humanName, ))
+        row = self.cursor.fetchone()
+        if row is not None:
+            SelfDefining = namedtuple('SelfDefining', ['division', 'code'])
+            return SelfDefining(row['DEL3COD'], row['AUT1COD'])
+        return None
+    
+    def iter_fields_with_subgroup(self, payload, subgroup_key):
+        for field, value in payload.items():
+            if field == subgroup_key and isinstance(value, dict):
+                for subfield, subvalue in value.items():
+                    yield subfield, subvalue
+            else:
+                yield field, value
+
     def script_create_sample (self, payload, client_id, igeo_id):
         div_client, cod_client = self.get_client(client_id)
         (
@@ -453,6 +474,17 @@ class DatabaseVeolab (object):
         """
         val = (self.division, self.serial, id_op, '', 0) # El autodefinible cero es obligatorio
         self.cursor.execute(query, val)
+
+        for field, value in self.iter_fields_with_subgroup(payload, "otrosParametros"):
+            selfdefining = self.get_selfdefining(field)
+            if selfdefining is not None:
+                # Inserta los campos autodefinibles
+                query = """
+                    INSERT INTO LABOYA (OPE3DEL, OPE3SER, OPE3COD, AUT3DEL, AUT3COD, OYACVAL) 
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """
+                val = (self.division, self.serial, id_op, selfdefining.division, selfdefining.code, value)
+                self.cursor.execute(query, val)
 
         # Tabla LABOYS (servicios)
         if cod_service is not None:

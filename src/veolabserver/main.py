@@ -26,6 +26,21 @@ logging.basicConfig(
 
 stop_event = Event()
 
+def ensure_channel_alive(channel, rb_config):
+    if not channel or not channel.is_open:
+        logging.warning("Recreando canal de informes por cierre detectado.")
+        connection = pika.BlockingConnection(pika.ConnectionParameters(
+            host=rb_config['PARCIGI'],
+            port=rb_config['PARCIGP'],
+            virtual_host=rb_config['PARCIGV'],
+            credentials=pika.PlainCredentials(rb_config['PARCIGU'], rb_config['PARCIGC']),
+            heartbeat=60,
+            blocked_connection_timeout=300))
+        new_channel = connection.channel()
+        new_channel.confirm_delivery()
+        return new_channel
+    return channel
+
 def process_received(body, database):
     # Procesa mensajes recibidos en la cola de analíticasRecibidas
     try:
@@ -166,7 +181,13 @@ def listener_perform(channel, database):
             break
 
 def process_reports_loop(channel, seconds):
+    database = DatabaseVeolab()
+    database.open()
+    rb_config = database.get_rabbit_config() if database.connection else None
+    database.close()
+
     while not stop_event.is_set():
+        channel = ensure_channel_alive(channel, rb_config)
         process_reports(channel)
         stop_event.wait(seconds)
 
@@ -300,7 +321,7 @@ def run():
             os._exit(1)            
 
     except pika.exceptions.AMQPError as e:
-        logging.error(f"EError de conexión RabbitMQ: {e}")
+        logging.error(f"Error de conexión RabbitMQ: {e}")
     except Exception as e:
         logging.error(f"Error inesperado: {e}")
 
@@ -322,7 +343,7 @@ def run():
 def run_with_reconnect():
     while not stop_event.is_set():
         try:
-            run()
+            run()            
         except pika.exceptions.AMQPError as e:
             logging.error(f"RabbitMQ error, reconectando en 5 segundos: {e}")
             time.sleep(5)
