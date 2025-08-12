@@ -26,21 +26,6 @@ logging.basicConfig(
 
 stop_event = Event()
 
-def ensure_channel_alive(channel, rb_config):
-    if not channel or not channel.is_open:
-        logging.warning("Recreando canal de informes por cierre detectado.")
-        connection = pika.BlockingConnection(pika.ConnectionParameters(
-            host=rb_config['PARCIGI'],
-            port=rb_config['PARCIGP'],
-            virtual_host=rb_config['PARCIGV'],
-            credentials=pika.PlainCredentials(rb_config['PARCIGU'], rb_config['PARCIGC']),
-            heartbeat=60,
-            blocked_connection_timeout=300))
-        new_channel = connection.channel()
-        new_channel.confirm_delivery()
-        return new_channel
-    return channel
-
 def process_received(body, database):
     # Procesa mensajes recibidos en la cola de analíticasRecibidas
     try:
@@ -180,15 +165,25 @@ def listener_perform(channel, database):
         except Exception:
             break
 
-def process_reports_loop(channel, seconds):
-    database = DatabaseVeolab()
-    database.open()
-    rb_config = database.get_rabbit_config() if database.connection else None
-    database.close()
-
+def process_reports_loop(connection, rb_config, seconds):
     while not stop_event.is_set():
-        channel = ensure_channel_alive(channel, rb_config)
-        process_reports(channel)
+        try:
+            if not connection or connection.is_closed:
+                logging.warning("Reconectando conexión con RabbitMQ para informes.")
+                credentials = pika.PlainCredentials(rb_config['PARCIGU'], rb_config['PARCIGC'])
+                connection = pika.BlockingConnection(pika.ConnectionParameters(
+                    host=rb_config['PARCIGI'],
+                    port=rb_config['PARCIGP'],
+                    virtual_host=rb_config['PARCIGV'],
+                    credentials=credentials,
+                    heartbeat=60,
+                    blocked_connection_timeout=300
+                ))
+            channel = connection.channel()
+            channel.confirm_delivery()
+            process_reports(channel)
+        except Exception as e:
+            logging.error(f"Error en bucle de informes: {e}")
         stop_event.wait(seconds)
 
 def hash_config(config):
@@ -284,24 +279,10 @@ def run():
                 thread_perform.start()
 
             # Inicia una consulta periódica a la base de datos para procesar informes
-            try:
-                connection_reports = pika.BlockingConnection(pika.ConnectionParameters(
-                        host=rb_config['PARCIGI'],  
-                        port=rb_config['PARCIGP'],  
-                        virtual_host=rb_config['PARCIGV'], 
-                        credentials=credentials,
-                        heartbeat=60,
-                        blocked_connection_timeout=300))
-            except (AMQPConnectionError, IncompatibleProtocolError) as e:
-                logging.error(f"Error de conexión con RabbitMQ (receive): {e}")
-                time.sleep(3)
-                os._exit(1)  
-            channel_reports = connection_reports.channel()
-            channel_reports.confirm_delivery()
             seconds = int(rb_config['PARNSEC'] or 60) 
             if seconds <= 0:
                 seconds = 60
-            thread_report = Thread(target=process_reports_loop, args=(channel_reports, seconds))
+            thread_report = Thread(target=process_reports_loop, args=(connection_reports, rb_config, seconds))
             thread_report.start()                
 
             while not stop_event.is_set():
