@@ -1,5 +1,7 @@
 import pymysql
 import base64
+import logging
+import time
 from .database_config import DatabaseConfig
 from datetime import datetime
 from collections import namedtuple
@@ -98,7 +100,6 @@ class DatabaseVeolab (object):
         return next_key 
 
     def logdb(self, command, text, details, commit=False):
-        # Registra el suceso en el log 
         try:
             cod = self.get_technical_key("IGELOG")
             query = """
@@ -106,15 +107,25 @@ class DatabaseVeolab (object):
                 VALUES (%s, %s, %s, %s, %s, %s)
             """
             dateReg = datetime.now().date().strftime('%Y/%m/%d %H:%M:%S')
-            str_details = str(details)
-            str_details = str_details.replace("\n", "").replace("\t", "")
+            str_details = str(details).replace("\n", "").replace("\t", "")
             val = (self.division, cod, dateReg, command, text, str_details)
             self.cursor.execute(query, val)
             if commit:
                 self.connection.commit()
-            print(text, details)
+
+            # Logging con nivel según el tipo de comando
+            fecha = time.strftime('%d/%m/%y')
+            mensaje = f"{text} {fecha} - {details}"
+            if command == "ERROR":
+                logging.error(mensaje)
+            elif command == "WARNING":
+                logging.warning(mensaje)
+            else:
+                logging.info(mensaje)
+
         except pymysql.Error as e:
-            print ("Error al intentar registrar el evento en el log de base de datos:", e) 
+            logging.error(f"Error al registrar en log de base de datos: {e}")
+
 
     def get_client(self, client_igeo):
         # Obtiene el código del cliente según Veolab

@@ -82,7 +82,6 @@ def process_reports(channel):
                     report_json = json.dumps(report_copy, ensure_ascii=False)
 
                     if not channel.is_open:
-                        logging.warning(f"Canal cerrado, no se puede enviar informe {report['codigoEntidadIgeo']}")
                         database.logdb("EXCEPTION", "Canal cerrado, no se pudo enviar informe", report['codigoEntidadIgeo'], True)
                         continue
 
@@ -165,26 +164,46 @@ def listener_perform(channel, database):
         except Exception:
             break
 
-def process_reports_loop(connection, rb_config, seconds):
+def process_reports_loop():
+    database = DatabaseVeolab()
+    database.open()
+    rb_config = database.get_rabbit_config() if database.connection else None
+    database.close()
+
+    if not rb_config or not is_valid_rabbit_config(rb_config):
+        logging.error("Configuración RabbitMQ inválida. No se puede iniciar el bucle de informes.")
+        return
+
+    seconds = int(rb_config.get('PARNSEC', 60))
+    if seconds <= 0:
+        seconds = 60
+
+    connection = None
+    channel = None
+
     while not stop_event.is_set():
         try:
             if not connection or connection.is_closed:
-                logging.warning("Reconectando conexión con RabbitMQ para informes.")
-                credentials = pika.PlainCredentials(rb_config['PARCIGU'], rb_config['PARCIGC'])
+                logging.info("Creando nueva conexión RabbitMQ para informes.")
                 connection = pika.BlockingConnection(pika.ConnectionParameters(
                     host=rb_config['PARCIGI'],
                     port=rb_config['PARCIGP'],
                     virtual_host=rb_config['PARCIGV'],
-                    credentials=credentials,
+                    credentials=pika.PlainCredentials(rb_config['PARCIGU'], rb_config['PARCIGC']),
                     heartbeat=60,
                     blocked_connection_timeout=300
                 ))
-            channel = connection.channel()
-            channel.confirm_delivery()
+                channel = connection.channel()
+                channel.confirm_delivery()
+                logging.info("Canal RabbitMQ creado correctamente.")
+
             process_reports(channel)
         except Exception as e:
-            logging.error(f"Error en bucle de informes: {e}")
+            logging.error(f"Error en el bucle de informes: {e}")
         stop_event.wait(seconds)
+
+    if connection and not connection.is_closed:
+        connection.close()
 
 def hash_config(config):
     config_string = ''.join([config.get(k, '') for k in ['PARCIGU', 'PARCIGC', 'PARCIGI', 'PACCIGP', 'PARCIGV']])
@@ -279,11 +298,8 @@ def run():
                 thread_perform.start()
 
             # Inicia una consulta periódica a la base de datos para procesar informes
-            seconds = int(rb_config['PARNSEC'] or 60) 
-            if seconds <= 0:
-                seconds = 60
-            thread_report = Thread(target=process_reports_loop, args=(connection_reports, rb_config, seconds))
-            thread_report.start()                
+            thread_report = Thread(target=process_reports_loop)
+            thread_report.start()            
 
             while not stop_event.is_set():
                 time.sleep(1) 
