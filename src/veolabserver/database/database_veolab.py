@@ -312,7 +312,21 @@ class DatabaseVeolab (object):
             report['datos']['nombreDocumento'] = self.get_document_name(row['INF1DEL'], row['INF1SER'], row['INF1COD'])
             report['datos']['pdfAnalitica'] = self.get_document_pdf(row['INF1DEL'], row['INF1SER'], row['INF1COD'])    
             report['datos']['empresaId'] = row['CLICIGC']
+
+            # Autodefinibles
+            query = """
+                SELECT AUT3DEL, AUT3COD, OYACVAL, AUTCNOM FROM LABOYA 
+                    LEFT JOIN LABAUT ON (LABOYA.AUT3DEL = LABAUT.DEL3COD AND LABOYA.AUT3COD = LABAUT.AUT1COD) 
+                    WHERE OPE3DEL = %s AND OPE3SER = %s AND OPE3COD = %s
+            """
+            self.cursor.execute(query, (row['OPE1DEL'], row['OPE1SER'], row['OPE1COD']))
+            rows_selfdefining = self.cursor.fetchall()
             
+            for row_selfdefining in rows_selfdefining:
+                if row_selfdefining['AUTCNOM'] is not None:
+                    field_selfdefining = self.get_field_selfdefining(row_selfdefining['AUTCNOM'])
+                    report['datos'][field_selfdefining] = row_selfdefining['OYACVAL']
+
             report['cola'] = row['CLICCIG']
 
             reports.append(report)
@@ -340,6 +354,11 @@ class DatabaseVeolab (object):
             SelfDefining = namedtuple('SelfDefining', ['division', 'code'])
             return SelfDefining(row['DEL3COD'], row['AUT1COD'])
         return None
+    
+    def get_field_selfdefining(self, human_name):
+        parts = human_name.split()
+        field = parts[0].lower() + ''.join(part.capitalize() for part in parts[1:])
+        return field
     
     def iter_fields_with_subgroup(self, payload, subgroup_key):
         for field, value in payload.items():
