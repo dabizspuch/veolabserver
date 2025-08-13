@@ -106,7 +106,7 @@ class DatabaseVeolab (object):
                 INSERT INTO IGELOG (DEL3COD, LOG1COD, LOGTFEC, LOGCTIP, LOGCDES, LOGCDET) 
                 VALUES (%s, %s, %s, %s, %s, %s)
             """
-            dateReg = datetime.now().date().strftime('%Y/%m/%d %H:%M:%S')
+            dateReg = datetime.now().strftime('%Y/%m/%d %H:%M:%S')
             str_details = str(details).replace("\n", "").replace("\t", "")
             val = (self.division, cod, dateReg, command, text, str_details)
             self.cursor.execute(query, val)
@@ -124,7 +124,9 @@ class DatabaseVeolab (object):
                 logging.info(mensaje)
 
         except pymysql.Error as e:
+            import traceback
             logging.error(f"Error al registrar en log de base de datos: {e}")
+            logging.error(traceback.format_exc())            
 
 
     def get_client(self, client_igeo):
