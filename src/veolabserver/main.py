@@ -66,7 +66,7 @@ def process_performed(body, database):
         database.logdb("ERROR", "Error inesperado:", e, True)
 
 
-def process_reports(channel):    
+def process_reports(connection, channel):    
     # Envía informes finalizados a la cola de analiticasRealizadas
     database = None
     try:
@@ -83,7 +83,8 @@ def process_reports(channel):
 
                     if not channel.is_open:
                         database.logdb("EXCEPTION", "Canal cerrado, no se pudo enviar informe", report['codigoEntidadIgeo'], True)
-                        continue
+                        channel = connection.channel()
+                        channel.confirm_delivery()                        
 
                     for attempt in range(3):  # Hasta 3 intentos
                         try:
@@ -197,7 +198,7 @@ def process_reports_loop():
                 channel.confirm_delivery()
                 logging.info("Canal RabbitMQ creado correctamente.")
 
-            process_reports(channel)
+            process_reports(connection, channel)
         except Exception as e:
             logging.error(f"Error en el bucle de informes: {e}")
         stop_event.wait(seconds)
