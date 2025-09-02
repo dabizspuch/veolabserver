@@ -64,6 +64,15 @@ class DatabaseVeolab (object):
         except pymysql.Error:
             pass
 
+    def ensure_connection(self):
+        try:
+            if self.connection is None:
+                raise pymysql.Error("Conexión no inicializada")
+            self.connection.ping(reconnect=True)
+        except pymysql.Error as e:
+            logging.warning(f"Conexión perdida. Reintentando... {e}")
+            self.open()
+
     def get_rabbit_config(self):
         query = "SELECT PARCIGI, PARCIGP, PARCIGV, PARCIGU, PARCIGC, PARNSEC FROM ACCPAR WHERE PAR1COD = 1;"
         self.cursor.execute(query)
@@ -100,6 +109,7 @@ class DatabaseVeolab (object):
         return next_key 
 
     def logdb(self, command, text, details, commit=False):
+        val = None
         try:
             cod = self.get_technical_key("IGELOG")
             query = """
@@ -126,6 +136,7 @@ class DatabaseVeolab (object):
         except pymysql.Error as e:
             import traceback
             logging.error(f"Error al registrar en log de base de datos: {e}")
+            logging.error(f"Intento de insertar: {val}")
             logging.error(traceback.format_exc())            
 
 
@@ -574,12 +585,14 @@ class DatabaseVeolab (object):
             self.cursor.execute(query, val)        
 
     def create_sample(self, payload, client_id, igeo_id):
+        self.ensure_connection()
         self.script_create_sample(payload, client_id, igeo_id)
         self.logdb("CREATE", f"Muestra creada: {payload['codigoMuestra']}", "")
         self.connection.commit()
         
     def update_sample(self, payload, client_id, igeo_id):
         # Actualiza los datos de la muestra de entrada
+        self.ensure_connection()
         self.script_delete_sample(payload['codigoMuestra'])
         self.script_create_sample(payload, client_id, igeo_id)
         self.logdb("UPDATE", f"Muestra actualizada: {payload['codigoMuestra']}", "")
@@ -587,6 +600,7 @@ class DatabaseVeolab (object):
 
     def delete_sample(self, payload):
         # Borra de la base de datos la muestra de entrada
+        self.ensure_connection()
         self.script_delete_sample(payload['codigoMuestra'])
         self.logdb("DELETE", f"Muestra eliminada: {payload['codigoMuestra']}", "")
         self.connection.commit()
