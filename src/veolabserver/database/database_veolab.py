@@ -183,22 +183,24 @@ class DatabaseVeolab (object):
                 LABTEC.TECBEXP, LABTEC.SEC2DEL, LABTEC.SEC2COD 
             FROM LABTYC
             LEFT JOIN LABTEC ON (LABTYC.TEC3DEL = LABTEC.DEL3COD AND LABTYC.TEC3COD = LABTEC.TEC1COD)
-            WHERE LABTYC.TYCCREF = %s AND LABTYC.CLI3DEL = %s AND LABTYC.CLI3COD = %s            
+            WHERE FIND_IN_SET(%s, LABTYC.TYCCREF) > 0
+                AND LABTYC.CLI3DEL = %s 
+                AND LABTYC.CLI3COD = %s            
         """
         self.cursor.execute(query, (parameter_igeo, div_client, cod_client))        
-        row = self.cursor.fetchone()
-        return row
+        return self.cursor.fetchone()
 
     def get_parameters_op(self, division, serial, code_op):
         # Obtiene la lista de técnicas de la operación de entrada
         query = """
-            SELECT RESCNOM, TYCCREF, RESCMET, RESCMIN, CORCVAL, RESCUNI 
+            SELECT RESCNOM, RESCREF, RESCMET, RESCMIN, CORCVAL, RESCUNI 
             FROM LABRES 
-            LEFT JOIN LABTYC ON (LABRES.TEC3DEL = LABTYC.TEC3DEL AND LABRES.TEC3COD = LABTYC.TEC3COD) 
-            LEFT JOIN LABCOR ON (LABRES.OPE3DEL = LABCOR.OPE3DEL AND LABRES.OPE3SER = LABCOR.OPE3SER 
-                AND LABRES.OPE3COD = LABCOR.OPE3COD AND LABRES.TEC3DEL = LABCOR.TEC3DEL 
+            LEFT JOIN LABCOR ON (LABRES.OPE3DEL = LABCOR.OPE3DEL 
+                AND LABRES.OPE3SER = LABCOR.OPE3SER 
+                AND LABRES.OPE3COD = LABCOR.OPE3COD 
+                AND LABRES.TEC3DEL = LABCOR.TEC3DEL 
                 AND LABRES.TEC3COD = LABCOR.TEC3COD)
-            WHERE LABRES.OPE3DEL = %s AND LABRES.OPE3SER = %s AND LABRES.OPE3COD = %s AND COR1COD = 1 AND (TYCCREF IS NOT NULL AND TYCCREF <> '')
+            WHERE LABRES.OPE3DEL = %s AND LABRES.OPE3SER = %s AND LABRES.OPE3COD = %s AND COR1COD = 1
         """
         self.cursor.execute(query, (division, serial, code_op))
         rows = self.cursor.fetchall()
@@ -325,7 +327,7 @@ class DatabaseVeolab (object):
             for tec_row in tec_rows:
                 objeto_analisis = {
                     'objetoAnalisis': tec_row['RESCNOM'],
-                    'codigoObjetoAnalisis': tec_row['TYCCREF'],
+                    'codigoObjetoAnalisis': tec_row['RESCREF'],
                     'metodo': tec_row['RESCMET'],
                     'minimo': tec_row['RESCMIN'],
                     'resultado': tec_row['CORCVAL'],
@@ -429,9 +431,9 @@ class DatabaseVeolab (object):
                         RESCNOI, RESBCUR, RESDACR, RESCPAR, RESCABR, RESCCAS, RESNPRE, RESCDTO,
                         RESCUNI, RESCLEY, RESCMET, RESCMEA, RESCNOR, RESNTIE, RESCLIM, RESCMIN, 
                         RESCINC, RESCINS, RESBEXP, SEC2DEL, SEC2COD, RESNORD, EMP2DEL, EMP2COD,
-                        SER2DEL, SER2COD) 
+                        SER2DEL, SER2COD, RESCREF) 
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
                 val = (
                     self.division, 
@@ -442,7 +444,8 @@ class DatabaseVeolab (object):
                     div_analyst,
                     cod_analyst, 
                     div_service, 
-                    cod_service
+                    cod_service,
+                    igeo_parameter['codigoObjetoAnalisis']
                 )
                 array_val.append(val)
                 # Nombres de técnicas para OPECTEC

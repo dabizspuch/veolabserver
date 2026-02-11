@@ -3,16 +3,24 @@ import json
 import time
 import signal
 import os
+import re
 import logging
 import hashlib
 from threading import Thread, Event
+from .database.database_config import DatabaseConfig
 from .database.database_veolab import DatabaseVeolab
 from pika.exceptions import AMQPConnectionError, IncompatibleProtocolError
 
-log_dir = "/var/log/veolabserver"
-if os.name == 'nt':  # Windows
-    log_dir = "C:\\veolabserver\\logs"
+db_cfg = DatabaseConfig()
+db_cfg.read_config()
 
+instance_id = re.sub(r"[^a-zA-Z0-9_-]", "_", db_cfg.database.lower())
+
+base_log_dir = "/var/log/veolabserver"
+if os.name == 'nt':  # Windows
+    base_log_dir = "C:\\veolabserver\\logs"
+
+log_dir = os.path.join(base_log_dir, instance_id)
 os.makedirs(log_dir, exist_ok=True)
 
 logging.basicConfig(
@@ -207,7 +215,7 @@ def process_reports_loop():
         connection.close()
 
 def hash_config(config):
-    config_string = ''.join([config.get(k, '') for k in ['PARCIGU', 'PARCIGC', 'PARCIGI', 'PACCIGP', 'PARCIGV']])
+    config_string = ''.join([config.get(k, '') for k in ['PARCIGU', 'PARCIGC', 'PARCIGI', 'PARCIGP', 'PARCIGV']])
     return hashlib.sha256(config_string.encode()).hexdigest()
 
 def monitor_config_changes(initial_hash):
@@ -355,5 +363,5 @@ if __name__ == '__main__':
         stop_event.set()
         os._exit(0)
 
-    signal.signal(signal.SIGINT, handle_interrupt)
+    signal.signal(signal.SIGINT, handle_interrupt)   
     run_with_reconnect()
