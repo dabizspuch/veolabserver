@@ -187,8 +187,9 @@ class DatabaseVeolab (object):
                 AND LABTYC.CLI3DEL = %s 
                 AND LABTYC.CLI3COD = %s            
         """
-        self.cursor.execute(query, (parameter_igeo, div_client, cod_client))        
-        return self.cursor.fetchone()
+        self.cursor.execute(query, (parameter_igeo, div_client, cod_client))
+        row = self.cursor.fetchone()
+        return row
 
     def get_parameters_op(self, division, serial, code_op):
         # Obtiene la lista de técnicas de la operación de entrada
@@ -396,6 +397,17 @@ class DatabaseVeolab (object):
 
     def script_create_sample (self, payload, client_id, igeo_id):
         div_client, cod_client = self.get_client(client_id)
+
+        group_code = payload.get("codigoGrupoObjetoAnalisis")
+
+        if not group_code:
+            objetos = payload.get("objetosAnalisis") or []
+            if objetos:
+                group_code = objetos[0].get("codigoGrupoObjetoAnalisis")
+
+        if not group_code:
+            raise ValueError("codigoGrupoObjetoAnalisis no informado en payload")
+            
         (
             div_service, 
             cod_service, 
@@ -405,7 +417,8 @@ class DatabaseVeolab (object):
             cod_op_type, 
             div_matrix, 
             cod_matrix
-        ) = self.get_service(payload['codigoGrupoObjetoAnalisis'], div_client, cod_client)
+        ) = self.get_service(group_code, div_client, cod_client)
+
         breakdown_type = self.get_breakdown_type()
         id_op = self.get_technical_key('LABOPE')    
 
