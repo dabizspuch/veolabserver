@@ -290,7 +290,7 @@ class DatabaseVeolab (object):
                 AND LABOPE.OPE1COD = LABOYS.OPE3COD)
             LEFT JOIN LABSER ON (LABOYS.SER3DEL = LABSER.DEL3COD
                 AND LABOYS.SER3COD = LABSER.SER1COD)
-            LEFT JOIN LABSYC ON (LABSER.DEL3COD = LABSYC.SER3COD 
+            LEFT JOIN LABSYC ON (LABSER.DEL3COD = LABSYC.SER3DEL 
                 AND LABSER.SER1COD = LABSYC.SER3COD 
                 AND LABOPE.CLI2DEL = LABSYC.CLI3DEL 
                 AND LABOPE.CLI2COD = LABSYC.CLI3COD)
@@ -338,7 +338,7 @@ class DatabaseVeolab (object):
 
             report['datos']['nombreDocumento'] = self.get_document_name(row['INF1DEL'], row['INF1SER'], row['INF1COD'])
             report['datos']['pdfAnalitica'] = self.get_document_pdf(row['INF1DEL'], row['INF1SER'], row['INF1COD'])    
-            report['datos']['empresaId'] = row['CLICIGC']
+            report['empresaId'] = row['CLICIGC']
 
             # Autodefinibles
             query = """
@@ -585,10 +585,6 @@ class DatabaseVeolab (object):
         dic_val = self.get_operation (reference_op)        
         if dic_val is not None:
             val = list(dic_val.values())
-            query = "DELETE FROM LABOPE WHERE DEL3COD = %s AND OPE1SER = %s AND OPE1COD = %s"
-            self.cursor.execute(query, val)
-            query = "DELETE FROM LABRES WHERE OPE3DEL = %s AND OPE3SER = %s AND OPE3COD = %s"
-            self.cursor.execute(query, val)
             query = "DELETE FROM LABCOR WHERE OPE3DEL = %s AND OPE3SER = %s AND OPE3COD = %s"
             self.cursor.execute(query, val)
             query = "DELETE FROM LABOYE WHERE OPE3DEL = %s AND OPE3SER = %s AND OPE3COD = %s"
@@ -599,6 +595,10 @@ class DatabaseVeolab (object):
             self.cursor.execute(query, val)
             query = "DELETE FROM LABOYS WHERE OPE3DEL = %s AND OPE3SER = %s AND OPE3COD = %s"
             self.cursor.execute(query, val)        
+            query = "DELETE FROM LABRES WHERE OPE3DEL = %s AND OPE3SER = %s AND OPE3COD = %s"
+            self.cursor.execute(query, val)
+            query = "DELETE FROM LABOPE WHERE DEL3COD = %s AND OPE1SER = %s AND OPE1COD = %s"
+            self.cursor.execute(query, val)
 
     def create_sample(self, payload, client_id, igeo_id):
         self.ensure_connection()

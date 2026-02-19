@@ -302,7 +302,7 @@ def run():
                     time.sleep(3)
                     os._exit(1)  
                 channel_perform = connection_perform.channel()
-                channel_receive.add_on_cancel_callback(lambda method_frame: logging.warning(f"Canal resultadoAnaliticasRealizadas cancelado: {method_frame}"))
+                channel_perform.add_on_cancel_callback(lambda method_frame: logging.warning(f"Canal resultadoAnaliticasRealizadas cancelado: {method_frame}"))
                 thread_perform = Thread(target=listener_perform, args=(channel_perform, database_perform))
                 thread_perform.start()
 
