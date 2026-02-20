@@ -89,6 +89,17 @@ def process_reports(connection, channel):
                     report_copy = {k: v for k, v in report.items() if k != 'cola'}
                     report_json = json.dumps(report_copy, ensure_ascii=False)
 
+                    report_to_log = report_copy.copy()
+                    if 'datos' in report_to_log:
+                        report_to_log['datos'] = report_to_log['datos'].copy()
+                        report_to_log['datos'].pop('pdfAnalitica', None)
+
+                    report_json_log = json.dumps(report_to_log, ensure_ascii=False)
+
+                    logging.info(
+                        f"JSON enviado a IGEO - {report['codigoEntidadIgeo']}: {report_json_log}"
+                    )
+
                     if not channel.is_open:
                         database.logdb("EXCEPTION", "Canal cerrado, no se pudo enviar informe", report['codigoEntidadIgeo'], True)
                         channel = connection.channel()
