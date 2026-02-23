@@ -475,6 +475,8 @@ class DatabaseVeolab (object):
                 array_cor.append ((self.division, self.serial, id_op, tec_fields['DEL3COD'], tec_fields['TEC1COD']))
 
         if len(array_val) > 0:
+            logging.info("LABRES SQL: %s", query)
+            logging.info("LABRES PARAMS: %s", val)            
             self.cursor.executemany(query, array_val)
 
         # Tabla LABCOR (columnas)
