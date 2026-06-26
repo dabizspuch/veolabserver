@@ -269,6 +269,40 @@ def is_valid_rabbit_config(config):
     required_keys = ['PARCIGU', 'PARCIGC', 'PARCIGI', 'PARCIGP', 'PARCIGV']
     return all(config.get(k) for k in required_keys)
 
+def notify_db(database, level, text, details=""):
+    # Escribe un aviso en el log de Veolab (IGELOG). Va por MySQL, que es
+    # independiente de RabbitMQ, así que el cliente se entera aunque la cola esté caída.
+    try:
+        database.ensure_connection()
+        database.logdb(level, text, details, True)
+    except Exception as e:
+        logging.error(f"No se pudo registrar el aviso en el log de Veolab: {e}")
+
+def connect_rabbit(conn_params, role, database):
+    # Conecta a RabbitMQ reintentando indefinidamente con backoff (5s..60s).
+    # Avisa en IGELOG al primer fallo y luego, como mucho, una vez por hora
+    # mientras siga caído. Devuelve la conexión, o None si se pide parada.
+    first_failure = None
+    last_notified = 0.0
+    backoff = 5
+    while not stop_event.is_set():
+        try:
+            return pika.BlockingConnection(conn_params)
+        except Exception as e:
+            now = time.time()
+            if first_failure is None:
+                first_failure = now
+                notify_db(database, "WARNING", f"Sin conexión con RabbitMQ ({role}), reintentando", str(e))
+                last_notified = now
+            elif now - last_notified >= 3600:
+                horas = int((now - first_failure) / 3600)
+                notify_db(database, "WARNING", f"Sigue sin conexión con RabbitMQ ({role}) tras {horas} h", str(e))
+                last_notified = now
+            logging.error(f"Error de conexión con RabbitMQ ({role}): {e}. Reintento en {backoff}s")
+            stop_event.wait(backoff)
+            backoff = min(backoff * 2, 60)
+    return None
+
 def run():
     thread_receive = None
     thread_perform = None
@@ -279,6 +313,8 @@ def run():
     connection_reports = None
     connection_receive = None
     connection_perform = None
+    channel_receive = None
+    channel_perform = None
 
     try:
         database = DatabaseVeolab()
@@ -289,6 +325,13 @@ def run():
 
         if rb_config and is_valid_rabbit_config(rb_config):
             credentials = pika.PlainCredentials(rb_config['PARCIGU'], rb_config['PARCIGC'])
+            conn_params = pika.ConnectionParameters(
+                host=rb_config['PARCIGI'],
+                port=rb_config['PARCIGP'],
+                virtual_host=rb_config['PARCIGV'],
+                credentials=credentials,
+                heartbeat=30,
+                blocked_connection_timeout=300)
 
             # Iniciar monitor de cambios de configuración
             initial_hash = hash_config(rb_config)
@@ -298,43 +341,24 @@ def run():
             database_receive = DatabaseVeolab()
             database_receive.open()
             if database_receive.connection is not None:
-                try:
-                    connection_receive = pika.BlockingConnection(pika.ConnectionParameters(
-                            host=rb_config['PARCIGI'],
-                            port=rb_config['PARCIGP'],
-                            virtual_host=rb_config['PARCIGV'],
-                            credentials=credentials,
-                            heartbeat=30,
-                            blocked_connection_timeout=300))
-                except (AMQPConnectionError, IncompatibleProtocolError) as e:
-                    logging.error(f"Error de conexión con RabbitMQ (receive): {e}")
-                    time.sleep(3)
-                    os._exit(1)                    
-                channel_receive = connection_receive.channel()
-                channel_receive.add_on_cancel_callback(lambda method_frame: logging.warning(f"Canal analiticasRecibidas cancelado: {method_frame}"))
-                thread_receive = Thread(target=listener_receive, args=(channel_receive, database_receive))
-                thread_receive.start()
+                connection_receive = connect_rabbit(conn_params, "analiticasRecibidas", database)
+                if connection_receive is not None:
+                    channel_receive = connection_receive.channel()
+                    channel_receive.add_on_cancel_callback(lambda method_frame: logging.warning(f"Canal analiticasRecibidas cancelado: {method_frame}"))
+                    thread_receive = Thread(target=listener_receive, args=(channel_receive, database_receive))
+                    thread_receive.start()
+                    notify_db(database, "OK", "Servicio conectado a RabbitMQ", rb_config.get('PARCIGV', ''))
 
             # Inicia el escuchador para la cola resultadoAnaliticasRealizadas
             database_perform = DatabaseVeolab()
             database_perform.open()
             if database_perform.connection is not None:
-                try:
-                    connection_perform = pika.BlockingConnection(pika.ConnectionParameters(
-                            host=rb_config['PARCIGI'],
-                            port=rb_config['PARCIGP'],
-                            virtual_host=rb_config['PARCIGV'],
-                            credentials=credentials,
-                            heartbeat=30,
-                            blocked_connection_timeout=300))
-                except (AMQPConnectionError, IncompatibleProtocolError) as e:
-                    logging.error(f"Error de conexión con RabbitMQ (receive): {e}")
-                    time.sleep(3)
-                    os._exit(1)  
-                channel_perform = connection_perform.channel()
-                channel_perform.add_on_cancel_callback(lambda method_frame: logging.warning(f"Canal resultadoAnaliticasRealizadas cancelado: {method_frame}"))
-                thread_perform = Thread(target=listener_perform, args=(channel_perform, database_perform))
-                thread_perform.start()
+                connection_perform = connect_rabbit(conn_params, "resultadoAnaliticasRealizadas", database)
+                if connection_perform is not None:
+                    channel_perform = connection_perform.channel()
+                    channel_perform.add_on_cancel_callback(lambda method_frame: logging.warning(f"Canal resultadoAnaliticasRealizadas cancelado: {method_frame}"))
+                    thread_perform = Thread(target=listener_perform, args=(channel_perform, database_perform))
+                    thread_perform.start()
 
             # Inicia una consulta periódica a la base de datos para procesar informes
             thread_report = Thread(target=process_reports_loop)
@@ -343,14 +367,17 @@ def run():
             while not stop_event.is_set():
                 time.sleep(1) 
 
-            if channel_receive.is_open:
+            if channel_receive is not None and channel_receive.is_open:
                 channel_receive.stop_consuming()
-            if channel_perform.is_open:
+            if channel_perform is not None and channel_perform.is_open:
                 channel_perform.stop_consuming()
 
-            thread_receive.join()
-            thread_perform.join()
-            thread_report.join()
+            if thread_receive is not None:
+                thread_receive.join()
+            if thread_perform is not None:
+                thread_perform.join()
+            if thread_report is not None:
+                thread_report.join()
         else:
             logging.error("Configuración RabbitMQ incompleta o inválida. Reiniciando servicio...")
             time.sleep(3)
