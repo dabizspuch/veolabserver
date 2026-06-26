@@ -157,8 +157,12 @@ def listener_receive(channel, database):
         try:
             channel.connection.process_data_events(time_limit=1)  # Reemplaza start_consuming
         except Exception as e:
-            logging.error(f"Error en process_data_events: {e}")
-            break
+            if stop_event.is_set():
+                break
+            # Conexión perdida (p.ej. heartbeat por inactividad). Salimos para que
+            # systemd (Restart=always) reinicie el servicio y reconecte.
+            logging.error(f"Conexión perdida en analiticasRecibidas, reiniciando servicio: {e}")
+            os._exit(1)
 
 
 def listener_perform(channel, database):
@@ -181,8 +185,12 @@ def listener_perform(channel, database):
     while not stop_event.is_set():
         try:
             channel.connection.process_data_events(time_limit=1)
-        except Exception:
-            break
+        except Exception as e:
+            if stop_event.is_set():
+                break
+            # Conexión perdida. Salimos para que systemd reinicie y reconecte.
+            logging.error(f"Conexión perdida en resultadoAnaliticasRealizadas, reiniciando servicio: {e}")
+            os._exit(1)
 
 def process_reports_loop():
     database = DatabaseVeolab()
@@ -210,7 +218,7 @@ def process_reports_loop():
                     port=rb_config['PARCIGP'],
                     virtual_host=rb_config['PARCIGV'],
                     credentials=pika.PlainCredentials(rb_config['PARCIGU'], rb_config['PARCIGC']),
-                    heartbeat=60,
+                    heartbeat=30,
                     blocked_connection_timeout=300
                 ))
                 channel = connection.channel()
@@ -281,11 +289,11 @@ def run():
             if database_receive.connection is not None:
                 try:
                     connection_receive = pika.BlockingConnection(pika.ConnectionParameters(
-                            host=rb_config['PARCIGI'],  
-                            port=rb_config['PARCIGP'], 
-                            virtual_host=rb_config['PARCIGV'],  
+                            host=rb_config['PARCIGI'],
+                            port=rb_config['PARCIGP'],
+                            virtual_host=rb_config['PARCIGV'],
                             credentials=credentials,
-                            heartbeat=60,
+                            heartbeat=30,
                             blocked_connection_timeout=300))
                 except (AMQPConnectionError, IncompatibleProtocolError) as e:
                     logging.error(f"Error de conexión con RabbitMQ (receive): {e}")
@@ -302,11 +310,11 @@ def run():
             if database_perform.connection is not None:
                 try:
                     connection_perform = pika.BlockingConnection(pika.ConnectionParameters(
-                            host=rb_config['PARCIGI'],  
-                            port=rb_config['PARCIGP'],  
-                            virtual_host=rb_config['PARCIGV'],  
+                            host=rb_config['PARCIGI'],
+                            port=rb_config['PARCIGP'],
+                            virtual_host=rb_config['PARCIGV'],
                             credentials=credentials,
-                            heartbeat=60,
+                            heartbeat=30,
                             blocked_connection_timeout=300))
                 except (AMQPConnectionError, IncompatibleProtocolError) as e:
                     logging.error(f"Error de conexión con RabbitMQ (receive): {e}")

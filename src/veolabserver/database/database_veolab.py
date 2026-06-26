@@ -600,8 +600,20 @@ class DatabaseVeolab (object):
             query = "DELETE FROM LABOPE WHERE DEL3COD = %s AND OPE1SER = %s AND OPE1COD = %s"
             self.cursor.execute(query, val)
 
+    def sample_exists(self, reference_op, client_igeo):
+        # Comprueba si ya existe una operación con esa referencia para el cliente.
+        # Sirve para idempotencia: RabbitMQ puede reentregar (redelivered) un mensaje
+        # no confirmado tras una reconexión, y no se debe crear la muestra dos veces.
+        div_client, cod_client = self.get_client(client_igeo)
+        query = "SELECT 1 FROM LABOPE WHERE OPECREF = %s AND CLI2DEL = %s AND CLI2COD = %s LIMIT 1"
+        self.cursor.execute(query, (reference_op, div_client, cod_client))
+        return self.cursor.fetchone() is not None
+
     def create_sample(self, payload, client_id, igeo_id):
         self.ensure_connection()
+        if self.sample_exists(payload['codigoMuestra'], client_id):
+            self.logdb("WARNING", f"Alta duplicada ignorada (la muestra ya existe): {payload['codigoMuestra']}", "", True)
+            return
         self.script_create_sample(payload, client_id, igeo_id)
         self.logdb("CREATE", f"Muestra creada: {payload['codigoMuestra']}", "")
         self.connection.commit()
