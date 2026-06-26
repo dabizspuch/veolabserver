@@ -6,6 +6,7 @@ import os
 import re
 import logging
 import hashlib
+from logging.handlers import RotatingFileHandler
 from threading import Thread, Event
 from .database.database_config import DatabaseConfig
 from .database.database_veolab import DatabaseVeolab
@@ -27,22 +28,31 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
-        logging.FileHandler(os.path.join(log_dir, "veolabserver.log")),
+        RotatingFileHandler(
+            os.path.join(log_dir, "veolabserver.log"),
+            maxBytes=5 * 1024 * 1024, backupCount=3, encoding='utf-8'
+        ),
         logging.StreamHandler()
     ]
 )
+# pika es muy verboso en INFO (estado de canales, "Connection is idle", etc.);
+# solo nos interesan sus avisos y errores.
+logging.getLogger("pika").setLevel(logging.WARNING)
 
 stop_event = Event()
 
 def process_received(body, database):
     # Procesa mensajes recibidos en la cola de analíticasRecibidas
     try:
-        logging.info(f"Mensaje recibido: {body.decode('utf-8')}")
         json_body = json.loads(body)
-                
+
         payload = json_body['datos']
         client_id = json_body['empresaId']
         igeo_id = json_body['idEntidadIgeo']
+
+        comando = json_body['comando'] or 'CREATE'
+        logging.info(f"Recibido {comando} muestra {json_body.get('codigoEntidadIgeo')} (empresa {client_id})")
+        logging.debug(f"Payload recibido: {body.decode('utf-8')}")
 
         if json_body['comando'] == 'CREATE' or json_body['comando'] is None:
             database.create_sample(payload, client_id, igeo_id)
@@ -96,7 +106,8 @@ def process_reports(connection, channel):
 
                     report_json_log = json.dumps(report_to_log, ensure_ascii=False)
 
-                    logging.info(
+                    logging.info(f"Enviando informe a IGEO: {report['codigoEntidadIgeo']}")
+                    logging.debug(
                         f"JSON enviado a IGEO - {report['codigoEntidadIgeo']}: {report_json_log}"
                     )
 
@@ -126,7 +137,7 @@ def process_reports(connection, channel):
                             if attempt == 2:  # último intento
                                 database.logdb("EXCEPTION", f"Excepción al enviar informe {report['codigoEntidadIgeo']}: {str(e)}", report['codigoEntidadIgeo'], True)
 
-        logging.info("Procesando informes ...")
+        logging.debug("Procesando informes ...")
 
     except Exception as e:
         logging.error(f"Error inesperado: {e}")
