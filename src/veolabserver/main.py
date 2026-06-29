@@ -239,7 +239,19 @@ def process_reports_loop():
             process_reports(connection, channel)
         except Exception as e:
             logging.error(f"Error en el bucle de informes: {e}")
-        stop_event.wait(seconds)
+
+        # Espera entre ciclos atendiendo la conexión (heartbeats), para que el
+        # broker no la cierre por inactividad y el siguiente envío no se resetee.
+        deadline = time.time() + seconds
+        while not stop_event.is_set() and time.time() < deadline:
+            try:
+                if connection is not None and connection.is_open:
+                    connection.process_data_events(time_limit=1)
+                else:
+                    stop_event.wait(1)
+            except Exception as e:
+                logging.warning(f"Conexión de informes perdida durante la espera: {e}")
+                break
 
     if connection and not connection.is_closed:
         connection.close()
