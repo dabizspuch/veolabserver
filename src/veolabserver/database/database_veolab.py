@@ -621,6 +621,17 @@ class DatabaseVeolab (object):
         self.cursor.execute(query, (reference_op, div_client, cod_client))
         return self.cursor.fetchone() is not None
 
+    def get_operation_full(self, reference_op, client_igeo):
+        # Localiza la operación por referencia + cliente, con su estado (OPECIGE),
+        # sin filtrar por estado. Devuelve dict (DEL3COD, OPE1SER, OPE1COD, OPECIGE) o None.
+        div_client, cod_client = self.get_client(client_igeo)
+        query = """
+            SELECT DEL3COD, OPE1SER, OPE1COD, OPECIGE FROM LABOPE
+            WHERE OPECREF = %s AND CLI2DEL = %s AND CLI2COD = %s
+        """
+        self.cursor.execute(query, (reference_op, div_client, cod_client))
+        return self.cursor.fetchone()
+
     def create_sample(self, payload, client_id, igeo_id):
         self.ensure_connection()
         if self.sample_exists(payload['codigoMuestra'], client_id):
@@ -630,11 +641,60 @@ class DatabaseVeolab (object):
         self.logdb("CREATE", f"Muestra creada: {payload['codigoMuestra']}", "")
         self.connection.commit()
         
+    def script_update_sample(self, payload, op):
+        # Actualiza SOLO la cabecera de la operación y rehace los autodefinibles.
+        # No toca parámetros (LABRES/LABCOR) ni resultados del laboratorio.
+        div, serial, code = op['DEL3COD'], op['OPE1SER'], op['OPE1COD']
+
+        query = """
+            UPDATE LABOPE SET OPECDES = %s, OPECOBS = %s, OPETREC = %s, OPECTEM = %s,
+                OPECENV = %s, OPECLUR = %s, OPECCAN = %s, OPECREC = %s
+            WHERE DEL3COD = %s AND OPE1SER = %s AND OPE1COD = %s
+        """
+        val = (
+            payload['muestra'],
+            payload['observaciones'],
+            datetime.strptime(payload['fechaCreacion'], '%d/%m/%Y %H:%M:%S'),
+            payload['temperatura'],
+            payload['tipoEnvase'],
+            payload['lugarRecogidaMuestra'],
+            payload['volumenMuestra'],
+            payload['transportista'],
+            div, serial, code
+        )
+        self.cursor.execute(query, val)
+
+        # Los autodefinibles son valores del técnico (sin resultados de laboratorio),
+        # así que se pueden rehacer a partir del payload.
+        self.cursor.execute(
+            "DELETE FROM LABOYA WHERE OPE3DEL = %s AND OPE3SER = %s AND OPE3COD = %s",
+            (div, serial, code)
+        )
+        # El autodefinible cero es obligatorio
+        self.cursor.execute(
+            "INSERT INTO LABOYA (OPE3DEL, OPE3SER, OPE3COD, AUT3DEL, AUT3COD) VALUES (%s, %s, %s, %s, %s)",
+            (div, serial, code, '', 0)
+        )
+        for field, value in self.iter_fields_with_subgroup(payload, "otrosParametros"):
+            selfdefining = self.get_selfdefining(field)
+            if selfdefining is not None:
+                self.cursor.execute(
+                    "INSERT INTO LABOYA (OPE3DEL, OPE3SER, OPE3COD, AUT3DEL, AUT3COD, OYACVAL) VALUES (%s, %s, %s, %s, %s, %s)",
+                    (div, serial, code, selfdefining.division, selfdefining.code, value)
+                )
+
     def update_sample(self, payload, client_id, igeo_id):
-        # Actualiza los datos de la muestra de entrada
+        # Modifica una muestra existente EN SITIO: solo cabecera + autodefinibles, y solo
+        # si está registrada (OPECIGE='R'). No borra ni recrea la operación.
         self.ensure_connection()
-        self.script_delete_sample(payload['codigoMuestra'])
-        self.script_create_sample(payload, client_id, igeo_id)
+        op = self.get_operation_full(payload['codigoMuestra'], client_id)
+        if op is None:
+            self.logdb("WARNING", f"UPDATE de muestra inexistente, se ignora: {payload['codigoMuestra']}", "", True)
+            return
+        if op['OPECIGE'] != 'R':
+            self.logdb("WARNING", f"UPDATE de muestra ya procesada (estado {op['OPECIGE']}), se ignora: {payload['codigoMuestra']}", "", True)
+            return
+        self.script_update_sample(payload, op)
         self.logdb("UPDATE", f"Muestra actualizada: {payload['codigoMuestra']}", "")
         self.connection.commit()
 
