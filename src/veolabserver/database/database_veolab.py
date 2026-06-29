@@ -622,11 +622,11 @@ class DatabaseVeolab (object):
         return self.cursor.fetchone() is not None
 
     def get_operation_full(self, reference_op, client_igeo):
-        # Localiza la operación por referencia + cliente, con su estado (OPECIGE),
-        # sin filtrar por estado. Devuelve dict (DEL3COD, OPE1SER, OPE1COD, OPECIGE) o None.
+        # Localiza la operación por referencia + cliente, con su estado operativo (OPECEST),
+        # sin filtrar por estado. Devuelve dict (DEL3COD, OPE1SER, OPE1COD, OPECEST) o None.
         div_client, cod_client = self.get_client(client_igeo)
         query = """
-            SELECT DEL3COD, OPE1SER, OPE1COD, OPECIGE FROM LABOPE
+            SELECT DEL3COD, OPE1SER, OPE1COD, OPECEST FROM LABOPE
             WHERE OPECREF = %s AND CLI2DEL = %s AND CLI2COD = %s
         """
         self.cursor.execute(query, (reference_op, div_client, cod_client))
@@ -685,14 +685,18 @@ class DatabaseVeolab (object):
 
     def update_sample(self, payload, client_id, igeo_id):
         # Modifica una muestra existente EN SITIO: solo cabecera + autodefinibles, y solo
-        # si está registrada (OPECIGE='R'). No borra ni recrea la operación.
+        # si está registrada (OPECEST=0). No borra ni recrea la operación.
         self.ensure_connection()
         op = self.get_operation_full(payload['codigoMuestra'], client_id)
         if op is None:
             self.logdb("WARNING", f"UPDATE de muestra inexistente, se ignora: {payload['codigoMuestra']}", "", True)
             return
-        if op['OPECIGE'] != 'R':
-            self.logdb("WARNING", f"UPDATE de muestra ya procesada (estado {op['OPECIGE']}), se ignora: {payload['codigoMuestra']}", "", True)
+        try:
+            registrada = int(op['OPECEST']) == 0
+        except (TypeError, ValueError):
+            registrada = False
+        if not registrada:
+            self.logdb("WARNING", f"UPDATE de muestra no registrada (OPECEST={op['OPECEST']}), se ignora: {payload['codigoMuestra']}", "", True)
             return
         self.script_update_sample(payload, op)
         self.logdb("UPDATE", f"Muestra actualizada: {payload['codigoMuestra']}", "")
