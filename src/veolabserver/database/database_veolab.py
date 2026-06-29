@@ -300,65 +300,77 @@ class DatabaseVeolab (object):
         rows = self.cursor.fetchall()
         reports = []
         for row in rows:
-            report = {}
-            report['tipoEntidadIgeo'] = "ANALITICA"
-            report['idEntidadIgeo'] = row['OPECIDG']
-            report['codigoEntidadIgeo'] = row['OPECREF']
-            report['comando'] = "UPDATE"
-            report['fecha'] = datetime.now().date().strftime('%d/%m/%Y %H:%M:%S')
-
-            report['datos'] = {}
-            report['datos']['id'] = row['OPECIDG']
-            report['datos']['codigoMuestra'] = row['OPECREF']
-            report['datos']['muestra'] = row['OPECDES']
-            report['datos']['fechaCreacion'] = row['OPETREC'].strftime('%d/%m/%Y %H:%M:%S')
-            report['datos']['observaciones'] = row['OPECOBS']
-            report['datos']['fechaInicioMuestra'] = row['OPEDINI'].strftime('%d/%m/%Y %H:%M:%S')
-            report['datos']['fechaFinMuestra'] = row['OPEDFIN'].strftime('%d/%m/%Y %H:%M:%S')
-            report['datos']['lugarRecogidaMuestra'] = row['OPECLUR']
-            report['datos']['temperatura'] = row['OPECTEM']
-            report['datos']['tipoEnvase'] = row['OPECENV']
-            report['datos']['codigoGrupoObjetoAnalisis'] = row['SYCCREF']
-            report['datos']['grupoObjetoAnalisis'] = row['SERCNOM']
-            report['datos']['volumenMuestra'] = row['OPECCAN']
-            report['datos']['transportista'] = row['OPECREC']       
-
-            report['datos']['objetosAnalisis'] = []
-            tec_rows = self.get_parameters_op(row['OPE1DEL'], row['OPE1SER'], row['OPE1COD'])
-            for tec_row in tec_rows:
-                objeto_analisis = {
-                    'objetoAnalisis': tec_row['RESCNOM'],
-                    'codigoObjetoAnalisis': tec_row['RESCREF'],
-                    'metodo': tec_row['RESCMET'],
-                    'minimo': tec_row['RESCMIN'],
-                    'resultado': tec_row['CORCVAL'],
-                    'unidadDeMedida': tec_row['RESCUNI']                    
-                }
-                report['datos']['objetosAnalisis'].append(objeto_analisis)
-
-            report['datos']['nombreDocumento'] = self.get_document_name(row['INF1DEL'], row['INF1SER'], row['INF1COD'])
-            report['datos']['pdfAnalitica'] = self.get_document_pdf(row['INF1DEL'], row['INF1SER'], row['INF1COD'])    
-            report['empresaId'] = row['CLICIGC']
-
-            # Autodefinibles
-            query = """
-                SELECT AUT3DEL, AUT3COD, OYACVAL, AUTCNOM FROM LABOYA 
-                    LEFT JOIN LABAUT ON (LABOYA.AUT3DEL = LABAUT.DEL3COD AND LABOYA.AUT3COD = LABAUT.AUT1COD) 
-                    WHERE OPE3DEL = %s AND OPE3SER = %s AND OPE3COD = %s
-            """
-            self.cursor.execute(query, (row['OPE1DEL'], row['OPE1SER'], row['OPE1COD']))
-            rows_selfdefining = self.cursor.fetchall()
-            
-            for row_selfdefining in rows_selfdefining:
-                if row_selfdefining['AUTCNOM'] is not None:
-                    field_selfdefining = self.get_field_selfdefining(row_selfdefining['AUTCNOM'])
-                    report['datos'][field_selfdefining] = row_selfdefining['OYACVAL']
-
-            report['cola'] = row['CLICCIG']
-
-            reports.append(report)
-
+            try:
+                reports.append(self.build_report(row))
+            except Exception as e:
+                logging.error(
+                    f"Error al construir el informe de la operación {row.get('OPECREF')}: {e}. "
+                    f"Se omite esa muestra y se continúa con el resto."
+                )
         return reports
+
+    def build_report(self, row):
+        # Construye el dict de un informe a partir de una fila de get_reports.
+        # Aislado para que un fallo en una muestra (p.ej. fecha nula) no tumbe todo el lote.
+        def fmt_dt(value):
+            return value.strftime('%d/%m/%Y %H:%M:%S') if value else None
+
+        report = {}
+        report['tipoEntidadIgeo'] = "ANALITICA"
+        report['idEntidadIgeo'] = row['OPECIDG']
+        report['codigoEntidadIgeo'] = row['OPECREF']
+        report['comando'] = "UPDATE"
+        report['fecha'] = datetime.now().date().strftime('%d/%m/%Y %H:%M:%S')
+
+        report['datos'] = {}
+        report['datos']['id'] = row['OPECIDG']
+        report['datos']['codigoMuestra'] = row['OPECREF']
+        report['datos']['muestra'] = row['OPECDES']
+        report['datos']['fechaCreacion'] = fmt_dt(row['OPETREC'])
+        report['datos']['observaciones'] = row['OPECOBS']
+        report['datos']['fechaInicioMuestra'] = fmt_dt(row['OPEDINI'])
+        report['datos']['fechaFinMuestra'] = fmt_dt(row['OPEDFIN'])
+        report['datos']['lugarRecogidaMuestra'] = row['OPECLUR']
+        report['datos']['temperatura'] = row['OPECTEM']
+        report['datos']['tipoEnvase'] = row['OPECENV']
+        report['datos']['codigoGrupoObjetoAnalisis'] = row['SYCCREF']
+        report['datos']['grupoObjetoAnalisis'] = row['SERCNOM']
+        report['datos']['volumenMuestra'] = row['OPECCAN']
+        report['datos']['transportista'] = row['OPECREC']
+
+        report['datos']['objetosAnalisis'] = []
+        tec_rows = self.get_parameters_op(row['OPE1DEL'], row['OPE1SER'], row['OPE1COD'])
+        for tec_row in tec_rows:
+            objeto_analisis = {
+                'objetoAnalisis': tec_row['RESCNOM'],
+                'codigoObjetoAnalisis': tec_row['RESCREF'],
+                'metodo': tec_row['RESCMET'],
+                'minimo': tec_row['RESCMIN'],
+                'resultado': tec_row['CORCVAL'],
+                'unidadDeMedida': tec_row['RESCUNI']
+            }
+            report['datos']['objetosAnalisis'].append(objeto_analisis)
+
+        report['datos']['nombreDocumento'] = self.get_document_name(row['INF1DEL'], row['INF1SER'], row['INF1COD'])
+        report['datos']['pdfAnalitica'] = self.get_document_pdf(row['INF1DEL'], row['INF1SER'], row['INF1COD'])
+        report['empresaId'] = row['CLICIGC']
+
+        # Autodefinibles
+        query_aut = """
+            SELECT AUT3DEL, AUT3COD, OYACVAL, AUTCNOM FROM LABOYA
+                LEFT JOIN LABAUT ON (LABOYA.AUT3DEL = LABAUT.DEL3COD AND LABOYA.AUT3COD = LABAUT.AUT1COD)
+                WHERE OPE3DEL = %s AND OPE3SER = %s AND OPE3COD = %s
+        """
+        self.cursor.execute(query_aut, (row['OPE1DEL'], row['OPE1SER'], row['OPE1COD']))
+        rows_selfdefining = self.cursor.fetchall()
+
+        for row_selfdefining in rows_selfdefining:
+            if row_selfdefining['AUTCNOM'] is not None:
+                field_selfdefining = self.get_field_selfdefining(row_selfdefining['AUTCNOM'])
+                report['datos'][field_selfdefining] = row_selfdefining['OYACVAL']
+
+        report['cola'] = row['CLICCIG']
+        return report
 
     def mark_sample_sent(self, reference_op):
         # Actualiza el estado de la operación a enviada a IGEO
