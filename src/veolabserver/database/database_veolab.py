@@ -108,10 +108,40 @@ class DatabaseVeolab (object):
         self.connection.commit()
         return next_key 
 
+    def next_igelog_key(self):
+        # IGELOG tiene PK (DEL3COD, LOG1COD), SIN serie, y solo lo escribe este servicio.
+        # Por eso el contador va por delegación (no por serie, a diferencia de get_technical_key)
+        # y se sincroniza con el máximo real para no colisionar tras restauraciones, cambios de
+        # serie o limpiezas del log.
+        self.cursor.execute(
+            "SELECT CLTNVAL FROM ACCCLT WHERE DEL3COD = %s AND CLTCTAB = 'IGELOG' AND CLTCSER = '' FOR UPDATE",
+            (self.division,)
+        )
+        row = self.cursor.fetchone()
+        self.cursor.execute(
+            "SELECT COALESCE(MAX(LOG1COD), 0) AS maximo FROM IGELOG WHERE DEL3COD = %s",
+            (self.division,)
+        )
+        max_real = self.cursor.fetchone()['maximo']
+        contador = row['CLTNVAL'] if row is not None else 0
+        next_key = max(contador, max_real) + 1
+        if row is None:
+            self.cursor.execute(
+                "INSERT INTO ACCCLT (CLTNVAL, DEL3COD, CLTCTAB, CLTCSER) VALUES (%s, %s, 'IGELOG', '')",
+                (next_key, self.division)
+            )
+        else:
+            self.cursor.execute(
+                "UPDATE ACCCLT SET CLTNVAL = %s WHERE DEL3COD = %s AND CLTCTAB = 'IGELOG' AND CLTCSER = ''",
+                (next_key, self.division)
+            )
+        self.connection.commit()
+        return next_key
+
     def logdb(self, command, text, details, commit=False):
         val = None
         try:
-            cod = self.get_technical_key("IGELOG")
+            cod = self.next_igelog_key()
             query = """
                 INSERT INTO IGELOG (DEL3COD, LOG1COD, LOGTFEC, LOGCTIP, LOGCDES, LOGCDET) 
                 VALUES (%s, %s, %s, %s, %s, %s)
