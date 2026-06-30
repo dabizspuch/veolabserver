@@ -34,22 +34,8 @@ class DatabaseVeolab (object):
             # Crea el cursor
             self.cursor = self.connection.cursor()
             # Lee la configuración de serie y delegación
-            query = "SELECT PARCIGS, PARCIGD FROM ACCPAR WHERE PAR1COD = 1"
-            self.cursor.execute(query)
-            row = self.cursor.fetchone()
-            self.division = row['PARCIGD'] if row['PARCIGD'] is not None else ""
-            self.serial = row['PARCIGS'] if row['PARCIGS'] is not None else ""
-            if self.serial == "":
-                # Busca la serie predeterminada para operaciones
-                query = """
-                    SELECT CLTCSER FROM ACCCLT 
-                    WHERE DEL3COD = %s AND CLTCTAB = 'LABOPE' AND CLTBPRE = 'T'
-                """
-                self.cursor.execute(query, (self.division, ))
-                row = self.cursor.fetchone()
-                if row is not None: 
-                    self.serial = row['CLTCSER'] if row['CLTCSER'] is not None else ""                   
-        
+            self.refresh_serial()
+
         except pymysql.Error as e:
             if self.connection is not None:
                 self.logdb("ERROR", "Error al establecer la conexión con la base de datos:", e, True)
@@ -72,6 +58,28 @@ class DatabaseVeolab (object):
         except pymysql.Error as e:
             logging.warning(f"Conexión perdida. Reintentando... {e}")
             self.open()
+
+    def refresh_serial(self):
+        # Resuelve la delegación y la serie a usar para operaciones:
+        #   1) PARCIGS (serie configurada para IGEO en ACCPAR), si está informada.
+        #   2) Si no, la serie predeterminada de LABOPE (CLTBPRE='T'), igual que la
+        #      función DBS_ObtenSeriePredeterminada de Veolab.
+        # Se relee en cada alta para no depender del reinicio del servicio cuando
+        # cambia la serie predeterminada en Veolab.
+        self.cursor.execute("SELECT PARCIGS, PARCIGD FROM ACCPAR WHERE PAR1COD = 1")
+        row = self.cursor.fetchone()
+        if row is None:
+            return
+        self.division = row['PARCIGD'] if row['PARCIGD'] is not None else ""
+        self.serial = row['PARCIGS'] if row['PARCIGS'] is not None else ""
+        if self.serial == "":
+            self.cursor.execute(
+                "SELECT CLTCSER FROM ACCCLT WHERE DEL3COD = %s AND CLTCTAB = 'LABOPE' AND CLTBPRE = 'T'",
+                (self.division, )
+            )
+            row = self.cursor.fetchone()
+            if row is not None:
+                self.serial = row['CLTCSER'] if row['CLTCSER'] is not None else ""
 
     def get_rabbit_config(self):
         query = "SELECT PARCIGI, PARCIGP, PARCIGV, PARCIGU, PARCIGC, PARNSEC FROM ACCPAR WHERE PAR1COD = 1;"
@@ -674,6 +682,8 @@ class DatabaseVeolab (object):
 
     def create_sample(self, payload, client_id, igeo_id):
         self.ensure_connection()
+        # Relee la serie predeterminada vigente (puede haber cambiado sin reiniciar).
+        self.refresh_serial()
         if self.sample_exists(payload['codigoMuestra'], client_id):
             self.logdb("WARNING", f"Alta duplicada ignorada (la muestra ya existe): {payload['codigoMuestra']}", "", True)
             return
@@ -730,6 +740,8 @@ class DatabaseVeolab (object):
         op = self.get_operation_full(payload['codigoMuestra'], client_id)
         if op is None:
             # No existía: se crea igualmente (alta), dejando aviso de que llegó como UPDATE.
+            # Relee la serie predeterminada vigente para el alta.
+            self.refresh_serial()
             self.logdb("WARNING", f"UPDATE de muestra inexistente; se crea como alta: {payload['codigoMuestra']}", "", True)
             self.script_create_sample(payload, client_id, igeo_id)
             self.connection.commit()
