@@ -49,15 +49,16 @@ def process_received(body, database):
         payload = json_body['datos']
         client_id = json_body['empresaId']
         igeo_id = json_body['idEntidadIgeo']
+        raw_json = body.decode('utf-8')  # JSON recibido tal cual, para guardarlo en OPECJSO
 
         comando = json_body['comando'] or 'CREATE'
         logging.info(f"Recibido {comando} muestra {json_body.get('codigoEntidadIgeo')} (empresa {client_id})")
-        logging.debug(f"Payload recibido: {body.decode('utf-8')}")
+        logging.debug(f"Payload recibido: {raw_json}")
 
         if json_body['comando'] == 'CREATE' or json_body['comando'] is None:
-            database.create_sample(payload, client_id, igeo_id)
+            database.create_sample(payload, client_id, igeo_id, raw_json)
         elif json_body['comando'] == 'UPDATE':
-            database.update_sample(payload, client_id, igeo_id)
+            database.update_sample(payload, client_id, igeo_id, raw_json)
         elif json_body['comando'] == 'DELETE':
             database.delete_sample(payload)
 

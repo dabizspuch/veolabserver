@@ -1,5 +1,6 @@
 import pymysql
 import base64
+import json
 import logging
 import time
 from .database_config import DatabaseConfig
@@ -17,6 +18,7 @@ class DatabaseVeolab (object):
         self.cursor = cursor         
         self.serial = serial  # Serie
         self.division = division  # Delegación
+        self._col_cache = {}  # Caché de existencia de columnas opcionales (OPECJSO, INFCJSO...)
 
     def open(self):
         # Conecta a la base de datos, prepara el cursor y carga la configuración
@@ -58,6 +60,23 @@ class DatabaseVeolab (object):
         except pymysql.Error as e:
             logging.warning(f"Conexión perdida. Reintentando... {e}")
             self.open()
+
+    def column_exists(self, table, column):
+        # Comprueba (cacheado) si una columna existe. Sirve para campos opcionales
+        # que el usuario puede haber añadido en Veolab (p.ej. OPECJSO, INFCJSO) o no.
+        key = (table, column)
+        if key not in self._col_cache:
+            try:
+                self.cursor.execute(
+                    "SELECT 1 FROM information_schema.COLUMNS "
+                    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = %s LIMIT 1",
+                    (table, column)
+                )
+                self._col_cache[key] = self.cursor.fetchone() is not None
+            except pymysql.Error as e:
+                logging.warning(f"No se pudo comprobar la existencia de {table}.{column}: {e}")
+                return False
+        return self._col_cache[key]
 
     def refresh_serial(self):
         # Resuelve la delegación y la serie a usar para operaciones:
@@ -417,6 +436,22 @@ class DatabaseVeolab (object):
                 field_selfdefining = self.get_field_selfdefining(row_selfdefining['AUTCNOM'])
                 report['datos'][field_selfdefining] = row_selfdefining['OYACVAL']
 
+        # Guarda el JSON que se envía a IGEO (sin el PDF) si el usuario ha añadido
+        # la columna INFCJSO en LABINF (opcional). En este punto report aún no lleva
+        # la clave 'cola', así que coincide con el mensaje que se envía a la cola.
+        if row['INF1COD'] is not None and self.column_exists('LABINF', 'INFCJSO'):
+            try:
+                envio = dict(report)
+                envio['datos'] = {k: v for k, v in report['datos'].items() if k != 'pdfAnalitica'}
+                json_envio = json.dumps(envio, ensure_ascii=False)
+                self.cursor.execute(
+                    "UPDATE LABINF SET INFCJSO = %s WHERE DEL3COD = %s AND INF1SER = %s AND INF1COD = %s",
+                    (json_envio, row['INF1DEL'], row['INF1SER'], row['INF1COD'])
+                )
+                self.connection.commit()
+            except Exception as e:
+                logging.warning(f"No se pudo guardar INFCJSO de la operación {row['OPECREF']}: {e}")
+
         report['cola'] = row['CLICCIG']
         return report
 
@@ -455,7 +490,7 @@ class DatabaseVeolab (object):
             else:
                 yield field, value
 
-    def script_create_sample (self, payload, client_id, igeo_id):
+    def script_create_sample (self, payload, client_id, igeo_id, raw_json=None):
         div_client, cod_client = self.get_client(client_id)
 
         group_code = payload.get("codigoGrupoObjetoAnalisis")
@@ -548,19 +583,17 @@ class DatabaseVeolab (object):
         self.cursor.executemany(query, array_cor)
 
         # Tabla LABOPE (operaciones)
-        query = """
-            INSERT INTO LABOPE (DEL3COD, OPE1SER, OPE1COD, OPECREF, OPECDES,  
-                OPEDREG, OPETREC, OPECOBS, CLI2DEL, CLI2COD, OPECTEM, OPECENV, OPECLUR, 
-                OPECCAN, OPECREC, OPECTIP, OPENPRE, OPECDTO, OPECTEC, OPEBFAB, OPECTID, 
-                TIO2DEL, TIO2COD, MAT2DEL, MAT2COD, OPECIDG, OPECIGE) 
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'R')
-        """
-        val = (
-            self.division, 
-            self.serial, 
-            id_op, 
-            payload['codigoMuestra'], 
+        columns = [
+            "DEL3COD", "OPE1SER", "OPE1COD", "OPECREF", "OPECDES",
+            "OPEDREG", "OPETREC", "OPECOBS", "CLI2DEL", "CLI2COD", "OPECTEM", "OPECENV", "OPECLUR",
+            "OPECCAN", "OPECREC", "OPECTIP", "OPENPRE", "OPECDTO", "OPECTEC", "OPEBFAB", "OPECTID",
+            "TIO2DEL", "TIO2COD", "MAT2DEL", "MAT2COD", "OPECIDG", "OPECIGE"
+        ]
+        val = [
+            self.division,
+            self.serial,
+            id_op,
+            payload['codigoMuestra'],
             payload['muestra'],
             datetime.now().date(),
             datetime.strptime(payload['fechaCreacion'], '%d/%m/%Y %H:%M:%S'),
@@ -582,8 +615,15 @@ class DatabaseVeolab (object):
             cod_op_type,
             div_matrix,
             cod_matrix,
-            igeo_id
-        )
+            igeo_id,
+            "R"
+        ]
+        # Guarda el JSON recibido si el usuario ha añadido la columna OPECJSO (opcional).
+        if raw_json is not None and self.column_exists('LABOPE', 'OPECJSO'):
+            columns.append("OPECJSO")
+            val.append(raw_json)
+        placeholders = ", ".join(["%s"] * len(val))
+        query = f"INSERT INTO LABOPE ({', '.join(columns)}) VALUES ({placeholders})"
         self.cursor.execute(query, val)
         
         # Tabla LABOYA (valores de autodefinibles)
@@ -680,28 +720,25 @@ class DatabaseVeolab (object):
         self.cursor.execute(query, (reference_op, div_client, cod_client))
         return self.cursor.fetchone()
 
-    def create_sample(self, payload, client_id, igeo_id):
+    def create_sample(self, payload, client_id, igeo_id, raw_json=None):
         self.ensure_connection()
         # Relee la serie predeterminada vigente (puede haber cambiado sin reiniciar).
         self.refresh_serial()
         if self.sample_exists(payload['codigoMuestra'], client_id):
             self.logdb("WARNING", f"Alta duplicada ignorada (la muestra ya existe): {payload['codigoMuestra']}", "", True)
             return
-        self.script_create_sample(payload, client_id, igeo_id)
+        self.script_create_sample(payload, client_id, igeo_id, raw_json)
         self.logdb("CREATE", f"Muestra creada: {payload['codigoMuestra']}", "")
         self.connection.commit()
-        
-    def script_update_sample(self, payload, op):
+
+    def script_update_sample(self, payload, op, raw_json=None):
         # Actualiza SOLO la cabecera de la operación y rehace los autodefinibles.
         # No toca parámetros (LABRES/LABCOR) ni resultados del laboratorio.
         div, serial, code = op['DEL3COD'], op['OPE1SER'], op['OPE1COD']
 
-        query = """
-            UPDATE LABOPE SET OPECDES = %s, OPECOBS = %s, OPETREC = %s, OPECTEM = %s,
-                OPECENV = %s, OPECLUR = %s, OPECCAN = %s, OPECREC = %s
-            WHERE DEL3COD = %s AND OPE1SER = %s AND OPE1COD = %s
-        """
-        val = (
+        set_cols = ["OPECDES = %s", "OPECOBS = %s", "OPETREC = %s", "OPECTEM = %s",
+                    "OPECENV = %s", "OPECLUR = %s", "OPECCAN = %s", "OPECREC = %s"]
+        set_val = [
             payload['muestra'],
             payload['observaciones'],
             datetime.strptime(payload['fechaCreacion'], '%d/%m/%Y %H:%M:%S'),
@@ -710,8 +747,16 @@ class DatabaseVeolab (object):
             payload['lugarRecogidaMuestra'],
             payload['volumenMuestra'],
             payload['transportista'],
-            div, serial, code
+        ]
+        # Actualiza el JSON recibido si el usuario ha añadido la columna OPECJSO (opcional).
+        if raw_json is not None and self.column_exists('LABOPE', 'OPECJSO'):
+            set_cols.append("OPECJSO = %s")
+            set_val.append(raw_json)
+        query = (
+            "UPDATE LABOPE SET " + ", ".join(set_cols) +
+            " WHERE DEL3COD = %s AND OPE1SER = %s AND OPE1COD = %s"
         )
+        val = tuple(set_val) + (div, serial, code)
         self.cursor.execute(query, val)
 
         # Los autodefinibles son valores del técnico (sin resultados de laboratorio),
@@ -733,7 +778,7 @@ class DatabaseVeolab (object):
                     (div, serial, code, selfdefining.division, selfdefining.code, value)
                 )
 
-    def update_sample(self, payload, client_id, igeo_id):
+    def update_sample(self, payload, client_id, igeo_id, raw_json=None):
         # Modifica una muestra existente EN SITIO: solo cabecera + autodefinibles, y solo
         # si está registrada (OPENEST=0). Si no existe, se da de alta. No borra ni recrea.
         self.ensure_connection()
@@ -743,7 +788,7 @@ class DatabaseVeolab (object):
             # Relee la serie predeterminada vigente para el alta.
             self.refresh_serial()
             self.logdb("WARNING", f"UPDATE de muestra inexistente; se crea como alta: {payload['codigoMuestra']}", "", True)
-            self.script_create_sample(payload, client_id, igeo_id)
+            self.script_create_sample(payload, client_id, igeo_id, raw_json)
             self.connection.commit()
             return
         try:
@@ -753,7 +798,7 @@ class DatabaseVeolab (object):
         if not registrada:
             self.logdb("WARNING", f"UPDATE no aplicado: la muestra ya avanzó de estado y no admite cambios (OPENEST={op['OPENEST']}): {payload['codigoMuestra']}", "", True)
             return
-        self.script_update_sample(payload, op)
+        self.script_update_sample(payload, op, raw_json)
         self.logdb("UPDATE", f"Muestra actualizada: {payload['codigoMuestra']}", "")
         self.connection.commit()
 
