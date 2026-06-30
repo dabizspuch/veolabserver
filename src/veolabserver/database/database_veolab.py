@@ -345,6 +345,16 @@ class DatabaseVeolab (object):
         def fmt_dt(value):
             return value.strftime('%d/%m/%Y %H:%M:%S') if value else None
 
+        def to_int(value):
+            # IGEO espera empresaId numérico, pero CLICIGC se guarda como varchar.
+            if value is None or str(value).strip() == "":
+                return None
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                logging.warning(f"empresaId no numérico ({value!r}) en la operación {row['OPECREF']}; se envía tal cual")
+                return value
+
         report = {}
         report['tipoEntidadIgeo'] = "ANALITICA"
         report['idEntidadIgeo'] = row['OPECIDG']
@@ -383,7 +393,7 @@ class DatabaseVeolab (object):
 
         report['datos']['nombreDocumento'] = self.get_document_name(row['INF1DEL'], row['INF1SER'], row['INF1COD'])
         report['datos']['pdfAnalitica'] = self.get_document_pdf(row['INF1DEL'], row['INF1SER'], row['INF1COD'])
-        report['empresaId'] = row['CLICIGC']
+        report['empresaId'] = to_int(row['CLICIGC'])
 
         # Autodefinibles
         query_aut = """
