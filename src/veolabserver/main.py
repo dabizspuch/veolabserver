@@ -70,6 +70,9 @@ def process_received(body, database):
 def process_performed(body, database):
     # Procesa mensajes recibidos en la cola de resultadoAnaliticasRealizadas
     try:
+        # La conexión MySQL de este listener puede haberse cerrado por inactividad;
+        # la revalidamos/reconectamos antes de marcar la muestra o escribir en el log.
+        database.ensure_connection()
         json_body = json.loads(body)
         if json_body['codigo'] == "1":  # Sin errores
             codeSample = json_body['mensajeEnviado']['datos']['codigoMuestra']
