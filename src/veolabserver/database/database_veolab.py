@@ -685,11 +685,14 @@ class DatabaseVeolab (object):
 
     def update_sample(self, payload, client_id, igeo_id):
         # Modifica una muestra existente EN SITIO: solo cabecera + autodefinibles, y solo
-        # si está registrada (OPENEST=0). No borra ni recrea la operación.
+        # si está registrada (OPENEST=0). Si no existe, se da de alta. No borra ni recrea.
         self.ensure_connection()
         op = self.get_operation_full(payload['codigoMuestra'], client_id)
         if op is None:
-            self.logdb("WARNING", f"UPDATE no aplicado: la muestra no existe: {payload['codigoMuestra']}", "", True)
+            # No existía: se crea igualmente (alta), dejando aviso de que llegó como UPDATE.
+            self.logdb("WARNING", f"UPDATE de muestra inexistente; se crea como alta: {payload['codigoMuestra']}", "", True)
+            self.script_create_sample(payload, client_id, igeo_id)
+            self.connection.commit()
             return
         try:
             registrada = int(op['OPENEST']) == 0
