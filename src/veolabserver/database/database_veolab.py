@@ -689,14 +689,14 @@ class DatabaseVeolab (object):
         self.ensure_connection()
         op = self.get_operation_full(payload['codigoMuestra'], client_id)
         if op is None:
-            self.logdb("WARNING", f"UPDATE de muestra inexistente, se ignora: {payload['codigoMuestra']}", "", True)
+            self.logdb("WARNING", f"UPDATE no aplicado: la muestra no existe: {payload['codigoMuestra']}", "", True)
             return
         try:
             registrada = int(op['OPENEST']) == 0
         except (TypeError, ValueError):
             registrada = False
         if not registrada:
-            self.logdb("WARNING", f"UPDATE de muestra no registrada (OPENEST={op['OPENEST']}), se ignora: {payload['codigoMuestra']}", "", True)
+            self.logdb("WARNING", f"UPDATE no aplicado: la muestra ya avanzó de estado y no admite cambios (OPENEST={op['OPENEST']}): {payload['codigoMuestra']}", "", True)
             return
         self.script_update_sample(payload, op)
         self.logdb("UPDATE", f"Muestra actualizada: {payload['codigoMuestra']}", "")
