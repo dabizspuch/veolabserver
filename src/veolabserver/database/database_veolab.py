@@ -523,6 +523,21 @@ class DatabaseVeolab (object):
         array_employes = []
         array_sections = []
         array_cor = []
+        # LABRES: columnas fijas + RESCOBS opcional (observaciones del objeto de análisis).
+        labres_columns = [
+            "OPE3DEL", "OPE3SER", "OPE3COD", "TEC3DEL", "TEC3COD", "RESCNOM",
+            "RESCNOI", "RESBCUR", "RESDACR", "RESCPAR", "RESCABR", "RESCCAS", "RESNPRE", "RESCDTO",
+            "RESCUNI", "RESCLEY", "RESCMET", "RESCMEA", "RESCNOR", "RESNTIE", "RESCLIM", "RESCMIN",
+            "RESCINC", "RESCINS", "RESBEXP", "SEC2DEL", "SEC2COD", "RESNORD", "EMP2DEL", "EMP2COD",
+            "SER2DEL", "SER2COD", "RESCREF"
+        ]
+        has_rescobs = self.column_exists('LABRES', 'RESCOBS')
+        if has_rescobs:
+            labres_columns.append("RESCOBS")
+        labres_query = (
+            "INSERT INTO LABRES (" + ", ".join(labres_columns) + ") "
+            "VALUES (" + ", ".join(["%s"] * len(labres_columns)) + ")"
+        )
         for index, igeo_parameter in enumerate(payload['objetosAnalisis']):
             tec_fields = self.get_parameter(igeo_parameter['codigoObjetoAnalisis'], div_client, cod_client)
             if tec_fields is not None:
@@ -534,27 +549,21 @@ class DatabaseVeolab (object):
                     div_analyst = ""
                     cod_analyst = 0
 
-                query = """
-                    INSERT INTO LABRES (OPE3DEL, OPE3SER, OPE3COD, TEC3DEL, TEC3COD, RESCNOM, 
-                        RESCNOI, RESBCUR, RESDACR, RESCPAR, RESCABR, RESCCAS, RESNPRE, RESCDTO,
-                        RESCUNI, RESCLEY, RESCMET, RESCMEA, RESCNOR, RESNTIE, RESCLIM, RESCMIN, 
-                        RESCINC, RESCINS, RESBEXP, SEC2DEL, SEC2COD, RESNORD, EMP2DEL, EMP2COD,
-                        SER2DEL, SER2COD, RESCREF) 
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """
-                val = (
-                    self.division, 
-                    self.serial, 
-                    id_op, 
-                    *tec_fields.values(), 
-                    index, 
+                val = [
+                    self.division,
+                    self.serial,
+                    id_op,
+                    *tec_fields.values(),
+                    index,
                     div_analyst,
-                    cod_analyst, 
-                    div_service, 
+                    cod_analyst,
+                    div_service,
                     cod_service,
                     igeo_parameter['codigoObjetoAnalisis']
-                )
+                ]
+                # Vuelca las observaciones del objeto de análisis si existe RESCOBS.
+                if has_rescobs:
+                    val.append(igeo_parameter.get('observaciones'))
                 array_val.append(val)
                 # Nombres de técnicas para OPECTEC
                 array_parameters.append(tec_fields['TECCNOM']) 
@@ -570,7 +579,7 @@ class DatabaseVeolab (object):
                 array_cor.append ((self.division, self.serial, id_op, tec_fields['DEL3COD'], tec_fields['TEC1COD']))
 
         if len(array_val) > 0:
-            self.cursor.executemany(query, array_val)
+            self.cursor.executemany(labres_query, array_val)
 
         # Tabla LABCOR (columnas)
         query = """
