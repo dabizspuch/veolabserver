@@ -28,8 +28,8 @@ class DatabaseVeolab (object):
             db_config.read_config()
             self.connection = pymysql.connect(host=db_config.host,
                                         port=int(db_config.port), 
-                                        user=db_config.user, 
-                                        passwd=db_config.passwd, 
+                                        user=db_config.user,
+                                        password=db_config.passwd,
                                         database=db_config.database,
                                         cursorclass=pymysql.cursors.DictCursor,
                                         connect_timeout=20)
