@@ -491,7 +491,12 @@ class DatabaseVeolab (object):
                 yield field, value
 
     def script_create_sample (self, payload, client_id, igeo_id, raw_json=None):
+        # Acumula los códigos IGEO que no se han podido mapear a Veolab. Se avisan en
+        # IGELOG al final y marcan la operación (OPEBMAP) para que el usuario los detecte.
+        errores_mapeo = []
         div_client, cod_client = self.get_client(client_id)
+        if div_client == "" and cod_client == "":
+            errores_mapeo.append(f"Cliente sin mapear (SINCLI.CLICIGC): {client_id}")
 
         group_code = payload.get("codigoGrupoObjetoAnalisis")
 
@@ -513,6 +518,8 @@ class DatabaseVeolab (object):
             div_matrix, 
             cod_matrix
         ) = self.get_service(group_code, div_client, cod_client)
+        if cod_service == "":
+            errores_mapeo.append(f"Grupo/servicio sin mapear (LABSYC.SYCCREF): {group_code}")
 
         breakdown_type = self.get_breakdown_type()
         id_op = self.get_technical_key('LABOPE')    
@@ -577,6 +584,8 @@ class DatabaseVeolab (object):
                     array_employes.append(tuple_analyst)      
                 # Vector para generar LABCOR
                 array_cor.append ((self.division, self.serial, id_op, tec_fields['DEL3COD'], tec_fields['TEC1COD']))
+            else:
+                errores_mapeo.append(f"Parámetro sin mapear (LABTYC.TYCCREF): {igeo_parameter['codigoObjetoAnalisis']}")
 
         if len(array_val) > 0:
             self.cursor.executemany(labres_query, array_val)
@@ -631,6 +640,10 @@ class DatabaseVeolab (object):
         if raw_json is not None and self.column_exists('LABOPE', 'OPECJSO'):
             columns.append("OPECJSO")
             val.append(raw_json)
+        # Marca la operación si hubo errores de mapeo (columna opcional OPEBMAP).
+        if self.column_exists('LABOPE', 'OPEBMAP'):
+            columns.append("OPEBMAP")
+            val.append("T" if errores_mapeo else "F")
         placeholders = ", ".join(["%s"] * len(val))
         query = f"INSERT INTO LABOPE ({', '.join(columns)}) VALUES ({placeholders})"
         self.cursor.execute(query, val)
@@ -686,8 +699,20 @@ class DatabaseVeolab (object):
                     VALUES (%s, %s, %s, %s, %s)
                 """
                 array_val.append((self.division, self.serial, id_op, row['DEP2DEL'], row['DEP2COD']))
-        
+
         self.cursor.executemany(query, array_val)
+
+        # Avisos de errores de mapeo en IGELOG (el canal que el usuario consulta en Veolab).
+        # Se emiten con la operación ya insertada: un aviso por código y un resumen por muestra.
+        if errores_mapeo:
+            ref = payload['codigoMuestra']
+            for err in errores_mapeo:
+                self.logdb("WARNING", err, ref)
+            # Escala a ERROR si la muestra queda inservible: sin cliente o sin ningún parámetro.
+            sin_cliente = (div_client == "" and cod_client == "")
+            sin_parametros = len(array_parameters) == 0
+            nivel = "ERROR" if (sin_cliente or sin_parametros) else "WARNING"
+            self.logdb(nivel, f"Muestra creada con errores de mapeo: {ref}", "; ".join(errores_mapeo))
 
     def script_delete_sample(self, reference_op):
         # Crea todos los registros necesarios para crear una muestra en Veolab
