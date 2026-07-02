@@ -443,7 +443,9 @@ class DatabaseVeolab (object):
             try:
                 envio = dict(report)
                 envio['datos'] = {k: v for k, v in report['datos'].items() if k != 'pdfAnalitica'}
-                json_envio = json.dumps(envio, ensure_ascii=False, indent=2)
+                # El visor de JSON de Veolab espera saltos de línea CRLF (como los que
+                # trae el JSON crudo de IGEO en OPECJSO); json.dumps solo pone \n.
+                json_envio = json.dumps(envio, ensure_ascii=False, indent=2).replace("\n", "\r\n")
                 self.cursor.execute(
                     "UPDATE LABINF SET INFCJSO = %s WHERE DEL3COD = %s AND INF1SER = %s AND INF1COD = %s",
                     (json_envio, row['INF1DEL'], row['INF1SER'], row['INF1COD'])
