@@ -443,7 +443,7 @@ class DatabaseVeolab (object):
             try:
                 envio = dict(report)
                 envio['datos'] = {k: v for k, v in report['datos'].items() if k != 'pdfAnalitica'}
-                json_envio = json.dumps(envio, ensure_ascii=False)
+                json_envio = json.dumps(envio, ensure_ascii=False, indent=2)
                 self.cursor.execute(
                     "UPDATE LABINF SET INFCJSO = %s WHERE DEL3COD = %s AND INF1SER = %s AND INF1COD = %s",
                     (json_envio, row['INF1DEL'], row['INF1SER'], row['INF1COD'])
