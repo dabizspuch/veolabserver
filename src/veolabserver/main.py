@@ -126,10 +126,11 @@ def process_reports(connection, channel):
                                 raise Exception("Canal cerrado")
 
                             channel.basic_publish(
-                                exchange='analiticasRealizadas_exchange', 
-                                routing_key=queue, 
+                                exchange='analiticasRealizadas_exchange',
+                                routing_key=queue,
                                 body=report_json.encode('utf8'),
-                                properties=pika.BasicProperties(delivery_mode=2)
+                                properties=pika.BasicProperties(delivery_mode=2),
+                                mandatory=True
                             )
                             database.mark_sample_sent(report['codigoEntidadIgeo'])
                             database.logdb("OK", "Informe enviado", report['codigoEntidadIgeo'], True)
