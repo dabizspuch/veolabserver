@@ -197,15 +197,26 @@ class DatabaseVeolab (object):
             logging.error(traceback.format_exc())            
 
 
-    def get_client(self, client_igeo):
-        # Obtiene el código del cliente según Veolab
-        query = "SELECT DEL3COD, CLI1COD FROM SINCLI WHERE CLICIGC = %s"
-        self.cursor.execute(query, (client_igeo, ))        
-        row = self.cursor.fetchone()
-        if row is not None:
-            return row['DEL3COD'], row['CLI1COD']
+    def get_client(self, client_igeo, codigo_sede=None):
+        # Obtiene el código del cliente según Veolab. Si el mismo Id. iGEO
+        # (CLICIGC) está repetido en varios clientes, se desambigua por
+        # CLICSUB (código de sede, opcional) cuando el mensaje trae
+        # codigoSede y ese cliente tiene CLICSUB informado.
+        has_clicsub = self.column_exists('SINCLI', 'CLICSUB')
+        if has_clicsub:
+            query = "SELECT DEL3COD, CLI1COD, CLICSUB FROM SINCLI WHERE CLICIGC = %s"
         else:
+            query = "SELECT DEL3COD, CLI1COD FROM SINCLI WHERE CLICIGC = %s"
+        self.cursor.execute(query, (client_igeo, ))
+        rows = self.cursor.fetchall()
+        if not rows:
             return "", ""
+        if has_clicsub and codigo_sede:
+            for row in rows:
+                if row['CLICSUB'] and row['CLICSUB'] == codigo_sede:
+                    return row['DEL3COD'], row['CLI1COD']
+        row = rows[0]
+        return row['DEL3COD'], row['CLI1COD']
 
     def get_service(self, service_igeo, div_client, cod_client):
         # Obtiene datos del servicio buscando por el mapeo de cliente
@@ -496,7 +507,7 @@ class DatabaseVeolab (object):
         # Acumula los códigos IGEO que no se han podido mapear a Veolab. Se avisan en
         # IGELOG al final y marcan la operación (OPEBMAP) para que el usuario los detecte.
         errores_mapeo = []
-        div_client, cod_client = self.get_client(client_id)
+        div_client, cod_client = self.get_client(client_id, payload.get('codigoSede'))
         if div_client == "" and cod_client == "":
             errores_mapeo.append(f"Cliente sin mapear (SINCLI.CLICIGC): {client_id}")
 
@@ -736,19 +747,19 @@ class DatabaseVeolab (object):
             query = "DELETE FROM LABOPE WHERE DEL3COD = %s AND OPE1SER = %s AND OPE1COD = %s"
             self.cursor.execute(query, val)
 
-    def sample_exists(self, reference_op, client_igeo):
+    def sample_exists(self, reference_op, client_igeo, codigo_sede=None):
         # Comprueba si ya existe una operación con esa referencia para el cliente.
         # Sirve para idempotencia: RabbitMQ puede reentregar (redelivered) un mensaje
         # no confirmado tras una reconexión, y no se debe crear la muestra dos veces.
-        div_client, cod_client = self.get_client(client_igeo)
+        div_client, cod_client = self.get_client(client_igeo, codigo_sede)
         query = "SELECT 1 FROM LABOPE WHERE OPECREF = %s AND CLI2DEL = %s AND CLI2COD = %s LIMIT 1"
         self.cursor.execute(query, (reference_op, div_client, cod_client))
         return self.cursor.fetchone() is not None
 
-    def get_operation_full(self, reference_op, client_igeo):
+    def get_operation_full(self, reference_op, client_igeo, codigo_sede=None):
         # Localiza la operación por referencia + cliente, con su estado operativo (OPENEST),
         # sin filtrar por estado. Devuelve dict (DEL3COD, OPE1SER, OPE1COD, OPENEST) o None.
-        div_client, cod_client = self.get_client(client_igeo)
+        div_client, cod_client = self.get_client(client_igeo, codigo_sede)
         query = """
             SELECT DEL3COD, OPE1SER, OPE1COD, OPENEST FROM LABOPE
             WHERE OPECREF = %s AND CLI2DEL = %s AND CLI2COD = %s
@@ -760,7 +771,7 @@ class DatabaseVeolab (object):
         self.ensure_connection()
         # Relee la serie predeterminada vigente (puede haber cambiado sin reiniciar).
         self.refresh_serial()
-        if self.sample_exists(payload['codigoMuestra'], client_id):
+        if self.sample_exists(payload['codigoMuestra'], client_id, payload.get('codigoSede')):
             self.logdb("WARNING", f"Alta duplicada ignorada (la muestra ya existe): {payload['codigoMuestra']}", "", True)
             return
         self.script_create_sample(payload, client_id, igeo_id, raw_json)
@@ -818,7 +829,7 @@ class DatabaseVeolab (object):
         # Modifica una muestra existente EN SITIO: solo cabecera + autodefinibles, y solo
         # si está registrada (OPENEST=0). Si no existe, se da de alta. No borra ni recrea.
         self.ensure_connection()
-        op = self.get_operation_full(payload['codigoMuestra'], client_id)
+        op = self.get_operation_full(payload['codigoMuestra'], client_id, payload.get('codigoSede'))
         if op is None:
             # No existía: se crea igualmente (alta), dejando aviso de que llegó como UPDATE.
             # Relee la serie predeterminada vigente para el alta.
