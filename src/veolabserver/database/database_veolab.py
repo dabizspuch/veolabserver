@@ -219,44 +219,68 @@ class DatabaseVeolab (object):
         return row['DEL3COD'], row['CLI1COD']
 
     def get_service(self, service_igeo, div_client, cod_client):
-        # Obtiene datos del servicio buscando por el mapeo de cliente
+        # Obtiene datos del servicio buscando por el mapeo de cliente. Aplica el
+        # precio especial por cliente (LABSYC) igual que Veolab
+        # (FAC_ObtenerPrecioServicio): si el cliente no tiene precio/descuento
+        # propio, usa el del servicio. También devuelve la normativa del
+        # servicio (LABSER.NOR2DEL/NOR2COD) para resolver la leyenda RESCNOR.
         query = """
-            SELECT LABSER.DEL3COD, LABSER.SER1COD, LABSER.SERNPRE, LABSER.SERCDTO, LABSER.TIO2DEL, LABSER.TIO2COD, LABSER.MAT2DEL, LABSER.MAT2COD 
-            FROM LABSYC 
+            SELECT LABSER.DEL3COD, LABSER.SER1COD, LABSER.SERNPRE, LABSER.SERCDTO, LABSER.TIO2DEL, LABSER.TIO2COD, LABSER.MAT2DEL, LABSER.MAT2COD,
+                LABSER.NOR2DEL, LABSER.NOR2COD, LABSYC.SYCNPRE, LABSYC.SYCCDTO
+            FROM LABSYC
             LEFT JOIN LABSER ON (LABSYC.SER3DEL = LABSER.DEL3COD AND LABSYC.SER3COD = LABSER.SER1COD)
             WHERE LABSYC.SYCCREF = %s AND LABSYC.CLI3DEL = %s AND LABSYC.CLI3COD = %s
         """
-        self.cursor.execute(query, (service_igeo, div_client, cod_client))        
+        self.cursor.execute(query, (service_igeo, div_client, cod_client))
         row = self.cursor.fetchone()
         if row is not None:
+            precio = row['SYCNPRE'] if row['SYCNPRE'] else row['SERNPRE']
+            descuento = row['SYCCDTO'] if row['SYCCDTO'] else row['SERCDTO']
             return (
-                row['DEL3COD'], 
-                row['SER1COD'], 
-                row['SERNPRE'], 
-                row['SERCDTO'], 
-                row['TIO2DEL'], 
-                row['TIO2COD'], 
-                row['MAT2DEL'], 
-                row['MAT2COD']
+                row['DEL3COD'],
+                row['SER1COD'],
+                precio,
+                descuento,
+                row['TIO2DEL'],
+                row['TIO2COD'],
+                row['MAT2DEL'],
+                row['MAT2COD'],
+                row['NOR2DEL'],
+                row['NOR2COD']
             )
         else:
-            return ("", "", 0, "", "", 0, "", 0)
+            return ("", "", 0, "", "", 0, "", 0, "", "")
 
-    def get_parameter(self, parameter_igeo, div_client, cod_client):
-        # Obtiene datos de la técnica buscando por el id de IGEO
+    def get_parameter(self, parameter_igeo, div_client, cod_client, div_nor="", cod_nor=""):
+        # Obtiene datos de la técnica buscando por el id de IGEO. Aplica el
+        # precio especial por cliente (LABTYC) igual que Veolab
+        # (FAC_ObtenerPrecioTecnica), y resuelve RESCNOR igual que
+        # AcumulaGrabarTecnicas: usa la leyenda de la normativa del servicio
+        # (LABTYN.TYNCVAL) si existe, si no la genérica de la técnica (TECCNOR).
         query = """
-            SELECT LABTEC.DEL3COD, LABTEC.TEC1COD, LABTEC.TECCNOM, LABTEC.TECCNOI, LABTEC.TECBCUR, LABTEC.TECDACR, LABTEC.TECCPAR, 
-                LABTEC.TECCABR, LABTEC.TECCCAS, LABTEC.TECNPRE, LABTEC.TECCDTO, LABTEC.TECCUNI, LABTEC.TECCLEY, LABTEC.TECCMET, 
-                LABTEC.TECCMEA, LABTEC.TECCNOR, LABTEC.TECNTIE, LABTEC.TECCLIM, LABTEC.TECCMIN, LABTEC.TECCINC, LABTEC.TECCINS, 
-                LABTEC.TECBEXP, LABTEC.SEC2DEL, LABTEC.SEC2COD 
+            SELECT LABTEC.DEL3COD, LABTEC.TEC1COD, LABTEC.TECCNOM, LABTEC.TECCNOI, LABTEC.TECBCUR, LABTEC.TECDACR, LABTEC.TECCPAR,
+                LABTEC.TECCABR, LABTEC.TECCCAS, LABTEC.TECNPRE, LABTEC.TECCDTO, LABTEC.TECCUNI, LABTEC.TECCLEY, LABTEC.TECCMET,
+                LABTEC.TECCMEA,
+                CASE WHEN LABTYN.TYNCVAL <> '' THEN LABTYN.TYNCVAL ELSE LABTEC.TECCNOR END AS TECCNOR,
+                LABTEC.TECNTIE, LABTEC.TECCLIM, LABTEC.TECCMIN, LABTEC.TECCINC, LABTEC.TECCINS,
+                LABTEC.TECBEXP, LABTEC.SEC2DEL, LABTEC.SEC2COD,
+                LABTYC.TYCNPRE, LABTYC.TYCCDTO
             FROM LABTYC
             LEFT JOIN LABTEC ON (LABTYC.TEC3DEL = LABTEC.DEL3COD AND LABTYC.TEC3COD = LABTEC.TEC1COD)
+            LEFT JOIN LABTYN ON (LABTYN.TEC3DEL = LABTEC.DEL3COD AND LABTYN.TEC3COD = LABTEC.TEC1COD
+                AND LABTYN.NOR3DEL = %s AND LABTYN.NOR3COD = %s)
             WHERE FIND_IN_SET(%s, LABTYC.TYCCREF) > 0
-                AND LABTYC.CLI3DEL = %s 
-                AND LABTYC.CLI3COD = %s            
+                AND LABTYC.CLI3DEL = %s
+                AND LABTYC.CLI3COD = %s
         """
-        self.cursor.execute(query, (parameter_igeo, div_client, cod_client))
+        self.cursor.execute(query, (div_nor, cod_nor, parameter_igeo, div_client, cod_client))
         row = self.cursor.fetchone()
+        if row is None:
+            return None
+        tyc_precio = row.pop('TYCNPRE')
+        tyc_descuento = row.pop('TYCCDTO')
+        row['TECNPRE'] = tyc_precio if tyc_precio else row['TECNPRE']
+        row['TECCDTO'] = tyc_descuento if tyc_descuento else row['TECCDTO']
         return row
 
     def get_parameters_op(self, division, serial, code_op):
@@ -522,14 +546,16 @@ class DatabaseVeolab (object):
             raise ValueError("codigoGrupoObjetoAnalisis no informado en payload")
             
         (
-            div_service, 
-            cod_service, 
-            prize, 
-            discount, 
-            div_op_type, 
-            cod_op_type, 
-            div_matrix, 
-            cod_matrix
+            div_service,
+            cod_service,
+            prize,
+            discount,
+            div_op_type,
+            cod_op_type,
+            div_matrix,
+            cod_matrix,
+            div_nor,
+            cod_nor
         ) = self.get_service(group_code, div_client, cod_client)
         if cod_service == "":
             errores_mapeo.append(f"Grupo/servicio sin mapear (LABSYC.SYCCREF): {group_code}")
@@ -559,7 +585,7 @@ class DatabaseVeolab (object):
             "VALUES (" + ", ".join(["%s"] * len(labres_columns)) + ")"
         )
         for index, igeo_parameter in enumerate(payload['objetosAnalisis']):
-            tec_fields = self.get_parameter(igeo_parameter['codigoObjetoAnalisis'], div_client, cod_client)
+            tec_fields = self.get_parameter(igeo_parameter['codigoObjetoAnalisis'], div_client, cod_client, div_nor, cod_nor)
             if tec_fields is not None:
                 analyst = self.get_analyst(tec_fields['DEL3COD'], tec_fields['TEC1COD'])
                 if analyst is not None:
