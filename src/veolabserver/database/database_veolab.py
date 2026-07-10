@@ -584,7 +584,7 @@ class DatabaseVeolab (object):
             "INSERT INTO LABRES (" + ", ".join(labres_columns) + ") "
             "VALUES (" + ", ".join(["%s"] * len(labres_columns)) + ")"
         )
-        resnord = 0  # Posición consecutiva desde cero SOLO entre las filas que se insertan
+        resnord = 1  # Ordinal 1..n de la técnica en la operación (convenio RESNORD); solo avanza en filas insertadas
         for igeo_parameter in payload['objetosAnalisis']:
             tec_fields = self.get_parameter(igeo_parameter['codigoObjetoAnalisis'], div_client, cod_client, div_nor, cod_nor)
             if tec_fields is not None:
