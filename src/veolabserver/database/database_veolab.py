@@ -584,7 +584,8 @@ class DatabaseVeolab (object):
             "INSERT INTO LABRES (" + ", ".join(labres_columns) + ") "
             "VALUES (" + ", ".join(["%s"] * len(labres_columns)) + ")"
         )
-        for index, igeo_parameter in enumerate(payload['objetosAnalisis']):
+        resnord = 0  # Posición consecutiva desde cero SOLO entre las filas que se insertan
+        for igeo_parameter in payload['objetosAnalisis']:
             tec_fields = self.get_parameter(igeo_parameter['codigoObjetoAnalisis'], div_client, cod_client, div_nor, cod_nor)
             if tec_fields is not None:
                 analyst = self.get_analyst(tec_fields['DEL3COD'], tec_fields['TEC1COD'])
@@ -600,7 +601,7 @@ class DatabaseVeolab (object):
                     self.serial,
                     id_op,
                     *tec_fields.values(),
-                    index,
+                    resnord,
                     div_analyst,
                     cod_analyst,
                     div_service,
@@ -611,6 +612,7 @@ class DatabaseVeolab (object):
                 if has_rescobs:
                     val.append(igeo_parameter.get('observaciones'))
                 array_val.append(val)
+                resnord += 1
                 # Nombres de técnicas para OPECTEC
                 array_parameters.append(tec_fields['TECCNOM']) 
                 # Vector de secciones para generar LABOYD
