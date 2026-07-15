@@ -478,9 +478,9 @@ class DatabaseVeolab (object):
             try:
                 envio = dict(report)
                 envio['datos'] = {k: v for k, v in report['datos'].items() if k != 'pdfAnalitica'}
-                # El visor de JSON de Veolab espera saltos de línea CRLF (como los que
-                # trae el JSON crudo de IGEO en OPECJSO); json.dumps solo pone \n.
-                json_envio = json.dumps(envio, ensure_ascii=False, indent=2).replace("\n", "\r\n")
+                # El visor de JSON de Veolab espera saltos de línea CRLF; json.dumps
+                # solo pone \n, así que se normaliza en json_for_viewer.
+                json_envio = self.json_for_viewer(envio)
                 self.cursor.execute(
                     "UPDATE LABINF SET INFCJSO = %s WHERE DEL3COD = %s AND INF1SER = %s AND INF1COD = %s",
                     (json_envio, row['INF1DEL'], row['INF1SER'], row['INF1COD'])
@@ -519,6 +519,19 @@ class DatabaseVeolab (object):
         field = parts[0].lower() + ''.join(part.capitalize() for part in parts[1:])
         return field
     
+    def json_for_viewer(self, data):
+        # Formatea un JSON para el visor de Veolab (OPECJSO/INFCJSO): siempre
+        # indentado y con saltos CRLF. El visor no muestra bien los JSON
+        # minificados o con solo LF, y iGEO no siempre los manda formateados.
+        # `data` puede ser una cadena JSON (el body recibido) o un dict.
+        try:
+            obj = json.loads(data) if isinstance(data, str) else data
+            texto = json.dumps(obj, ensure_ascii=False, indent=2)
+        except (ValueError, TypeError):
+            # Último recurso: si no se puede parsear, se guarda tal cual.
+            return data if isinstance(data, str) else json.dumps(data, ensure_ascii=False)
+        return texto.replace("\n", "\r\n")
+
     def iter_fields_with_subgroup(self, payload, subgroup_key):
         for field, value in payload.items():
             if field == subgroup_key and isinstance(value, dict):
@@ -678,9 +691,10 @@ class DatabaseVeolab (object):
             "R"
         ]
         # Guarda el JSON recibido si el usuario ha añadido la columna OPECJSO (opcional).
+        # Se normaliza (indentado + CRLF) para que el visor de Veolab lo muestre bien.
         if raw_json is not None and self.column_exists('LABOPE', 'OPECJSO'):
             columns.append("OPECJSO")
-            val.append(raw_json)
+            val.append(self.json_for_viewer(raw_json))
         # Marca la operación si hubo errores de mapeo (columna opcional OPEBMAP).
         if self.column_exists('LABOPE', 'OPEBMAP'):
             columns.append("OPEBMAP")
@@ -775,18 +789,27 @@ class DatabaseVeolab (object):
             query = "DELETE FROM LABOPE WHERE DEL3COD = %s AND OPE1SER = %s AND OPE1COD = %s"
             self.cursor.execute(query, val)
 
-    def sample_exists(self, reference_op, client_igeo, codigo_delegacion=None):
-        # Comprueba si ya existe una operación con esa referencia para el cliente.
-        # Sirve para idempotencia: RabbitMQ puede reentregar (redelivered) un mensaje
-        # no confirmado tras una reconexión, y no se debe crear la muestra dos veces.
-        div_client, cod_client = self.get_client(client_igeo, codigo_delegacion)
-        query = "SELECT 1 FROM LABOPE WHERE OPECREF = %s AND CLI2DEL = %s AND CLI2COD = %s LIMIT 1"
-        self.cursor.execute(query, (reference_op, div_client, cod_client))
-        return self.cursor.fetchone() is not None
+    def sample_exists(self, reference_op, client_igeo, codigo_delegacion=None, igeo_id=None):
+        # Comprueba si ya existe la operación (para idempotencia: RabbitMQ puede
+        # reentregar un mensaje no confirmado tras una reconexión, y no se debe crear
+        # la muestra dos veces). Reutiliza la misma lógica de emparejamiento que el UPDATE.
+        return self.get_operation_full(reference_op, client_igeo, codigo_delegacion, igeo_id) is not None
 
-    def get_operation_full(self, reference_op, client_igeo, codigo_delegacion=None):
-        # Localiza la operación por referencia + cliente, con su estado operativo (OPENEST),
-        # sin filtrar por estado. Devuelve dict (DEL3COD, OPE1SER, OPE1COD, OPENEST) o None.
+    def get_operation_full(self, reference_op, client_igeo, codigo_delegacion=None, igeo_id=None):
+        # Localiza la operación con su estado operativo (OPENEST), sin filtrar por estado.
+        # Empareja primero por el id inmutable de iGEO (OPECIDG = idEntidadIgeo): es estable
+        # entre el CREATE y sus UPDATE, y no depende de cómo se resuelva el cliente (que puede
+        # cambiar entre mensajes y provocaba duplicados). Si no hay id o no aparece, se cae al
+        # emparejamiento histórico por referencia (OPECREF) + cliente Veolab resuelto.
+        # Devuelve dict (DEL3COD, OPE1SER, OPE1COD, OPENEST) o None.
+        if igeo_id is not None and str(igeo_id).strip() != "":
+            self.cursor.execute(
+                "SELECT DEL3COD, OPE1SER, OPE1COD, OPENEST FROM LABOPE WHERE OPECIDG = %s",
+                (igeo_id,)
+            )
+            row = self.cursor.fetchone()
+            if row is not None:
+                return row
         div_client, cod_client = self.get_client(client_igeo, codigo_delegacion)
         query = """
             SELECT DEL3COD, OPE1SER, OPE1COD, OPENEST FROM LABOPE
@@ -799,14 +822,14 @@ class DatabaseVeolab (object):
         self.ensure_connection()
         # Relee la serie predeterminada vigente (puede haber cambiado sin reiniciar).
         self.refresh_serial()
-        if self.sample_exists(payload['codigoMuestra'], client_id, payload.get('codigoDelegacion')):
+        if self.sample_exists(payload['codigoMuestra'], client_id, payload.get('codigoDelegacion'), igeo_id):
             self.logdb("WARNING", f"Alta duplicada ignorada (la muestra ya existe): {payload['codigoMuestra']}", "", True)
             return
         self.script_create_sample(payload, client_id, igeo_id, raw_json)
         self.logdb("CREATE", f"Muestra creada: {payload['codigoMuestra']}", "")
         self.connection.commit()
 
-    def script_update_sample(self, payload, op, raw_json=None):
+    def script_update_sample(self, payload, op, igeo_id=None, raw_json=None):
         # Actualiza SOLO la cabecera de la operación y rehace los autodefinibles.
         # No toca parámetros (LABRES/LABCOR) ni resultados del laboratorio.
         div, serial, code = op['DEL3COD'], op['OPE1SER'], op['OPE1COD']
@@ -823,10 +846,17 @@ class DatabaseVeolab (object):
             payload['volumenMuestra'],
             payload['transportista'],
         ]
+        # Si la operación se emparejó por referencia+cliente (respaldo) pero no tenía el
+        # id de iGEO guardado, se rellena ahora OPECIDG para que los próximos UPDATE la
+        # localicen directamente por id.
+        if igeo_id is not None and str(igeo_id).strip() != "":
+            set_cols.append("OPECIDG = %s")
+            set_val.append(igeo_id)
         # Actualiza el JSON recibido si el usuario ha añadido la columna OPECJSO (opcional).
+        # Se normaliza (indentado + CRLF) para que el visor de Veolab lo muestre bien.
         if raw_json is not None and self.column_exists('LABOPE', 'OPECJSO'):
             set_cols.append("OPECJSO = %s")
-            set_val.append(raw_json)
+            set_val.append(self.json_for_viewer(raw_json))
         query = (
             "UPDATE LABOPE SET " + ", ".join(set_cols) +
             " WHERE DEL3COD = %s AND OPE1SER = %s AND OPE1COD = %s"
@@ -855,16 +885,14 @@ class DatabaseVeolab (object):
 
     def update_sample(self, payload, client_id, igeo_id, raw_json=None):
         # Modifica una muestra existente EN SITIO: solo cabecera + autodefinibles, y solo
-        # si está registrada (OPENEST=0). Si no existe, se da de alta. No borra ni recrea.
+        # si está registrada (OPENEST=0). Si no se encuentra, NO se crea: solo se avisa
+        # (evita duplicados). No borra ni recrea.
         self.ensure_connection()
-        op = self.get_operation_full(payload['codigoMuestra'], client_id, payload.get('codigoDelegacion'))
+        op = self.get_operation_full(payload['codigoMuestra'], client_id, payload.get('codigoDelegacion'), igeo_id)
         if op is None:
-            # No existía: se crea igualmente (alta), dejando aviso de que llegó como UPDATE.
-            # Relee la serie predeterminada vigente para el alta.
-            self.refresh_serial()
-            self.logdb("WARNING", f"UPDATE de muestra inexistente; se crea como alta: {payload['codigoMuestra']}", "", True)
-            self.script_create_sample(payload, client_id, igeo_id, raw_json)
-            self.connection.commit()
+            # No existe la muestra: no se da de alta desde un UPDATE (política acordada para
+            # no duplicar muestras). Queda registrado en IGELOG para que el usuario lo detecte.
+            self.logdb("WARNING", f"UPDATE ignorado, muestra inexistente (no se crea alta): {payload['codigoMuestra']}", f"idEntidadIgeo={igeo_id}", True)
             return
         try:
             registrada = int(op['OPENEST']) == 0
@@ -873,7 +901,7 @@ class DatabaseVeolab (object):
         if not registrada:
             self.logdb("WARNING", f"UPDATE no aplicado: la muestra ya avanzó de estado y no admite cambios (OPENEST={op['OPENEST']}): {payload['codigoMuestra']}", "", True)
             return
-        self.script_update_sample(payload, op, raw_json)
+        self.script_update_sample(payload, op, igeo_id, raw_json)
         self.logdb("UPDATE", f"Muestra actualizada: {payload['codigoMuestra']}", "")
         self.connection.commit()
 
