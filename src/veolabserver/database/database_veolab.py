@@ -106,6 +106,14 @@ class DatabaseVeolab (object):
         row = self.cursor.fetchone()
         return row
 
+    def is_pre_environment(self):
+        # Distingue PRE de PRO por el host de RabbitMQ configurado en ACCPAR
+        # (p.ej. pdi.pre.igeoapp.com en PRE vs pdi.igeoapp.com en PRO). Solo
+        # cambia esta cuenta/conexion entre entornos, no la BD de Veolab.
+        rb_config = self.get_rabbit_config()
+        host = (rb_config or {}).get('PARCIGI') or ""
+        return ".pre." in host.lower()
+
     def get_technical_key(self, table_name):
         # Obtiene la clave técnica para tabla de entrada
         query = """
@@ -390,10 +398,11 @@ class DatabaseVeolab (object):
         """
         self.cursor.execute(query)
         rows = self.cursor.fetchall()
+        include_pdf_json = self.is_pre_environment()
         reports = []
         for row in rows:
             try:
-                reports.append(self.build_report(row))
+                reports.append(self.build_report(row, include_pdf_json))
             except Exception as e:
                 logging.error(
                     f"Error al construir el informe de la operación {row.get('OPECREF')}: {e}. "
@@ -401,9 +410,12 @@ class DatabaseVeolab (object):
                 )
         return reports
 
-    def build_report(self, row):
+    def build_report(self, row, include_pdf_json=False):
         # Construye el dict de un informe a partir de una fila de get_reports.
         # Aislado para que un fallo en una muestra (p.ej. fecha nula) no tumbe todo el lote.
+        # include_pdf_json: en PRE se guarda pdfAnalitica tambien en INFCJSO (para
+        # poder inspeccionar el JSON completo que recibiria IGEO); en PRO se sigue
+        # omitiendo para no engordar la BD con PDFs en base64.
         def fmt_dt(value):
             return value.strftime('%d/%m/%Y %H:%M:%S') if value else None
 
@@ -471,13 +483,18 @@ class DatabaseVeolab (object):
                 field_selfdefining = self.get_field_selfdefining(row_selfdefining['AUTCNOM'])
                 report['datos'][field_selfdefining] = row_selfdefining['OYACVAL']
 
-        # Guarda el JSON que se envía a IGEO (sin el PDF) si el usuario ha añadido
-        # la columna INFCJSO en LABINF (opcional). En este punto report aún no lleva
-        # la clave 'cola', así que coincide con el mensaje que se envía a la cola.
+        # Guarda el JSON que se envía a IGEO si el usuario ha añadido la columna
+        # INFCJSO en LABINF (opcional). En este punto report aún no lleva la
+        # clave 'cola', así que coincide con el mensaje que se envía a la cola.
+        # El PDF se omite salvo en PRE (include_pdf_json), donde interesa ver
+        # el JSON completo tal cual se envía a IGEO.
         if row['INF1COD'] is not None and self.column_exists('LABINF', 'INFCJSO'):
             try:
                 envio = dict(report)
-                envio['datos'] = {k: v for k, v in report['datos'].items() if k != 'pdfAnalitica'}
+                if include_pdf_json:
+                    envio['datos'] = dict(report['datos'])
+                else:
+                    envio['datos'] = {k: v for k, v in report['datos'].items() if k != 'pdfAnalitica'}
                 # El visor de JSON de Veolab espera saltos de línea CRLF; json.dumps
                 # solo pone \n, así que se normaliza en json_for_viewer.
                 json_envio = self.json_for_viewer(envio)
