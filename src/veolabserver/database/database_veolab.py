@@ -902,14 +902,18 @@ class DatabaseVeolab (object):
 
     def update_sample(self, payload, client_id, igeo_id, raw_json=None):
         # Modifica una muestra existente EN SITIO: solo cabecera + autodefinibles, y solo
-        # si está registrada (OPENEST=0). Si no se encuentra, NO se crea: solo se avisa
-        # (evita duplicados). No borra ni recrea.
+        # si está registrada (OPENEST=0). Si no se encuentra, se da de alta. No borra ni recrea.
         self.ensure_connection()
         op = self.get_operation_full(payload['codigoMuestra'], client_id, payload.get('codigoDelegacion'), igeo_id)
         if op is None:
-            # No existe la muestra: no se da de alta desde un UPDATE (política acordada para
-            # no duplicar muestras). Queda registrado en IGELOG para que el usuario lo detecte.
-            self.logdb("WARNING", f"UPDATE ignorado, muestra inexistente (no se crea alta): {payload['codigoMuestra']}", f"idEntidadIgeo={igeo_id}", True)
+            # No existía (p.ej. el CREATE se perdió o la muestra se borró en Veolab): se crea
+            # como alta, dejando aviso de que llegó como UPDATE. El emparejamiento por el id
+            # inmutable de iGEO (OPECIDG) es el que evita crear duplicados aquí.
+            # Relee la serie predeterminada vigente para el alta.
+            self.refresh_serial()
+            self.logdb("WARNING", f"UPDATE de muestra inexistente; se crea como alta: {payload['codigoMuestra']}", f"idEntidadIgeo={igeo_id}", True)
+            self.script_create_sample(payload, client_id, igeo_id, raw_json)
+            self.connection.commit()
             return
         try:
             registrada = int(op['OPENEST']) == 0
