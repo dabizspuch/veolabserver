@@ -573,7 +573,16 @@ class DatabaseVeolab (object):
                 group_code = objetos[0].get("codigoGrupoObjetoAnalisis")
 
         if not group_code:
-            raise ValueError("codigoGrupoObjetoAnalisis no informado en payload")
+            # Sin grupo no hay servicio y la muestra no se crea. El error identifica la
+            # muestra y su cliente para que el laboratorio pueda reclamar el reenvío: al
+            # reenviarla, el UPDATE no la encontrará y la dará de alta completa.
+            cliente = " ".join(
+                str(payload.get(campo)) for campo in ('codigoCliente', 'nombreCliente') if payload.get(campo)
+            )
+            raise ValueError(
+                "Muestra NO creada: grupo de análisis no informado (codigoGrupoObjetoAnalisis)"
+                + (f" | Cliente: {cliente}" if cliente else "")
+            )
             
         (
             div_service,
@@ -911,8 +920,11 @@ class DatabaseVeolab (object):
             # inmutable de iGEO (OPECIDG) es el que evita crear duplicados aquí.
             # Relee la serie predeterminada vigente para el alta.
             self.refresh_serial()
-            self.logdb("WARNING", f"UPDATE de muestra inexistente; se crea como alta: {payload['codigoMuestra']}", f"idEntidadIgeo={igeo_id}", True)
+            # El aviso se escribe DESPUÉS del alta: si el alta falla (p.ej. la muestra
+            # llega sin grupo de análisis) no debe quedar en IGELOG un "se crea como
+            # alta" de una muestra que en realidad no ha entrado.
             self.script_create_sample(payload, client_id, igeo_id, raw_json)
+            self.logdb("WARNING", f"UPDATE de muestra inexistente; se crea como alta: {payload['codigoMuestra']}", f"idEntidadIgeo={igeo_id}", True)
             self.connection.commit()
             return
         try:

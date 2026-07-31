@@ -43,8 +43,14 @@ stop_event = Event()
 
 def process_received(body, database):
     # Procesa mensajes recibidos en la cola de analíticasRecibidas
+    referencia = ""
+    comando = ""
     try:
         json_body = json.loads(body)
+        # Se guardan antes de procesar: si algo falla, el aviso de IGELOG tiene que
+        # identificar la muestra para que el laboratorio sepa cuál no ha entrado y
+        # pueda pedir que se la reenvíen.
+        referencia = json_body.get('codigoEntidadIgeo') or ""
 
         payload = json_body['datos']
         client_id = json_body['empresaId']
@@ -65,7 +71,15 @@ def process_received(body, database):
     except json.JSONDecodeError as e:
         database.logdb("ERROR", "Error al decodificar el cuerpo JSON:", e, True)
     except Exception as e:
-        database.logdb("ERROR", "Error inesperado:", e, True)
+        # El mensaje se descarta (se hace ack igualmente), así que este aviso es el único
+        # rastro que le queda al laboratorio: lleva la referencia de iGEO para poder
+        # reclamar el reenvío de la muestra.
+        etiqueta = f" ({comando})" if comando else ""
+        if referencia:
+            texto = f"Muestra NO procesada{etiqueta}: {referencia}"
+        else:
+            texto = f"Muestra NO procesada{etiqueta}: sin referencia en el mensaje"
+        database.logdb("ERROR", texto, e, True)
 
 
 def process_performed(body, database):
