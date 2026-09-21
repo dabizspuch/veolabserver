@@ -6,6 +6,28 @@ import time
 from .database_config import DatabaseConfig
 from datetime import datetime
 from collections import namedtuple
+from html import unescape
+
+# Códigos del mensaje de iGEO que se usan para buscar en los mapeos de Veolab.
+IGEO_MAPPING_CODES = ('codigoDelegacion', 'codigoGrupoObjetoAnalisis', 'codigoObjetoAnalisis')
+
+
+def normalize_igeo_codes(payload):
+    # iGEO a veces manda los códigos con entidades HTML (p.ej. "TORR-F&amp;Q" en vez
+    # de "TORR-F&Q"), y así no coinciden con el mapeo del laboratorio. Se deshace el
+    # escapado solo en los códigos de mapeo; el resto del mensaje (y el JSON guardado
+    # en OPECJSO) queda tal cual llega.
+    def fix(obj):
+        for key in IGEO_MAPPING_CODES:
+            if isinstance(obj.get(key), str):
+                obj[key] = unescape(obj[key])
+
+    fix(payload)
+    for objeto in payload.get('objetosAnalisis') or []:
+        if isinstance(objeto, dict):
+            fix(objeto)
+    return payload
+
 
 class DatabaseVeolab (object):
     """

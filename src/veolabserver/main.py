@@ -9,7 +9,7 @@ import hashlib
 from logging.handlers import RotatingFileHandler
 from threading import Thread, Event
 from .database.database_config import DatabaseConfig
-from .database.database_veolab import DatabaseVeolab
+from .database.database_veolab import DatabaseVeolab, normalize_igeo_codes
 from pika.exceptions import AMQPConnectionError, IncompatibleProtocolError
 
 db_cfg = DatabaseConfig()
@@ -52,7 +52,7 @@ def process_received(body, database):
         # pueda pedir que se la reenvíen.
         referencia = json_body.get('codigoEntidadIgeo') or ""
 
-        payload = json_body['datos']
+        payload = normalize_igeo_codes(json_body['datos'])
         client_id = json_body['empresaId']
         igeo_id = json_body['idEntidadIgeo']
         raw_json = body.decode('utf-8')  # JSON recibido tal cual, para guardarlo en OPECJSO
