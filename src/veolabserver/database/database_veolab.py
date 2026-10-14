@@ -359,27 +359,31 @@ class DatabaseVeolab (object):
         else:
             return None
 
-    def get_document_name(self, division, serial, code_inf):
-        # Obtiene el nombre del documento del informe de entrada
-        query = "SELECT FATCNOM FROM DOCFAT WHERE DEL3COD = %s AND INF2SER = %s AND INF2COD = %s"
-        self.cursor.execute(query, (division, serial, code_inf))
-        row = self.cursor.fetchone()
-        if row is not None:
-            return row['FATCNOM']
-        else:
-            return None
-
-    def get_document_pdf(self, division, serial, code_inf):
-        # Obtiene el contenido en PDF en base 64 del documento del informe 
+    def get_report_document(self, division, serial, code_inf):
+        # Obtiene el último PDF del informe que no está en la papelera. Veolab
+        # manda a la papelera con DIR2COD = 0 pero deja la fila en DOCFAT, así
+        # que al reexportar conviven el documento viejo y el nuevo.
         query = """
-            SELECT BLOLCON, BLONTAM FROM DOCBLO 
-                LEFT JOIN DOCFAT ON (DOCBLO.DEL3COD = DOCFAT.DEL3COD 
-                    AND DOCBLO.FAT3COD = DOCFAT.FAT1COD 
-                    AND DOCBLO.VER3COD = DOCFAT.VER2COD)
-            WHERE DOCFAT.DEL3COD = %s AND DOCFAT.INF2SER = %s AND DOCFAT.INF2COD = %s
-            ORDER BY DOCBLO.DEL3COD, DOCBLO.BLO1COD
+            SELECT DEL3COD, FAT1COD, FATCNOM, VER2COD FROM DOCFAT
+            WHERE DEL3COD = %s AND INF2SER = %s AND INF2COD = %s
+              AND COALESCE(DIR2COD, -1) <> 0
+              AND LOWER(FATCTIP) LIKE '%%pdf'
+            ORDER BY FATTMOD DESC, FAT1COD DESC
+            LIMIT 1
         """
         self.cursor.execute(query, (division, serial, code_inf))
+        return self.cursor.fetchone()
+
+    def get_document_pdf(self, document):
+        # Obtiene el contenido en PDF en base 64 de la versión actual del documento
+        if document is None:
+            return ""
+        query = """
+            SELECT BLOLCON, BLONTAM FROM DOCBLO
+            WHERE DEL3COD = %s AND FAT3COD = %s AND VER3COD = %s
+            ORDER BY BLO1COD
+        """
+        self.cursor.execute(query, (document['DEL3COD'], document['FAT1COD'], document['VER2COD']))
         rows = self.cursor.fetchall()
         blob = b""
         for row in rows:
@@ -487,8 +491,9 @@ class DatabaseVeolab (object):
             }
             report['datos']['objetosAnalisis'].append(objeto_analisis)
 
-        report['datos']['nombreDocumento'] = self.get_document_name(row['INF1DEL'], row['INF1SER'], row['INF1COD'])
-        report['datos']['pdfAnalitica'] = self.get_document_pdf(row['INF1DEL'], row['INF1SER'], row['INF1COD'])
+        document = self.get_report_document(row['INF1DEL'], row['INF1SER'], row['INF1COD'])
+        report['datos']['nombreDocumento'] = document['FATCNOM'] if document else None
+        report['datos']['pdfAnalitica'] = self.get_document_pdf(document)
         report['empresaId'] = to_int(row['CLICIGC'])
 
         # Autodefinibles
